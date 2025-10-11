@@ -7,8 +7,12 @@ from matplotlib.font_manager import FontProperties
 
 def get_fonts() -> tuple[FontProperties, FontProperties]:
     """Load custom fonts for the plot and return (heading, labels)."""
-    font_path_heading = os.path.join(os.getcwd(), "fonts", "Montserrat-Bold.ttf")
-    font_path_labels = os.path.join(os.getcwd(), "fonts", "Montserrat-SemiBold.ttf")
+    font_path_heading = os.path.join(
+        os.getcwd(), "assets", "fonts", "Montserrat-Bold.ttf"
+    )
+    font_path_labels = os.path.join(
+        os.getcwd(), "assets", "fonts", "Montserrat-SemiBold.ttf"
+    )
 
     heading = FontProperties(
         family="sans-serif",
