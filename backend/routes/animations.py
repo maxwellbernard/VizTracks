@@ -9,6 +9,7 @@ import pandas as pd
 import psutil
 from flask import Blueprint, jsonify, request
 
+from backend.core.config import ENCODER_URL
 from backend.services.db import query_user_duckdb_for_animation
 from backend.services.encoding import encode_animation
 from backend.services.system import log_mem
@@ -94,6 +95,8 @@ def generate_animation():
         t5 = time.time()
         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp_file:
             temp_path = temp_file.name
+        if ENCODER_URL:
+            print(f"Using remote encoder at {ENCODER_URL}")
         encode_animation(anim, temp_path, fps)
         with open(temp_path, "rb") as f:
             video_bytes = f.read()
@@ -120,6 +123,18 @@ def generate_animation():
         )
         return jsonify({"video": video_base64, "filename": filename}), 200
 
+    except RuntimeError as e:
+        import traceback
+
+        print(traceback.format_exc())
+        return (
+            jsonify(
+                {
+                    "error": f"Animation generation failed due to GPU encoder: {str(e)}",
+                }
+            ),
+            503,
+        )
     except Exception as e:
         import traceback
 
