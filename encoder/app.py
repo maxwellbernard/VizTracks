@@ -141,5 +141,98 @@ def encode():
             pass
 
 
+@app.post("/encode_pipe")
+def encode_pipe():
+    """Stream PNG bytes directly to ffmpeg via stdin using image2pipe.
+
+    Query params:
+      - fps: frames per second
+    Body:
+      - application/octet-stream with concatenated PNG images in order
+    Response:
+      - JSON { video: base64 MP4 }
+    """
+    try:
+        fps = int(request.args.get("fps", 28))
+    except Exception:
+        fps = 28
+
+    import subprocess
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_out:
+        out_path = tmp_out.name
+
+    try:
+        # Sanity check for NVENC
+        accels = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-hwaccels"], capture_output=True, text=True
+        )
+        if accels.returncode != 0 or "cuda" not in accels.stdout.lower():
+            return jsonify({"error": "GPU (CUDA/NVENC) not available"}), 500
+
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "image2pipe",
+            "-vcodec",
+            "png",
+            "-framerate",
+            str(fps),
+            "-i",
+            "-",
+            *get_ffmpeg_args(fps),
+            out_path,
+        ]
+        app.logger.info(f"Starting ffmpeg (pipe): {' '.join(cmd)}")
+        proc = subprocess.Popen(
+            cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+
+        # Read request body in chunks and forward to ffmpeg stdin
+        total_bytes = 0
+        t0 = time.perf_counter()
+        chunk_size = 65536
+        while True:
+            chunk = request.stream.read(chunk_size)
+            if not chunk:
+                break
+            total_bytes += len(chunk)
+            proc.stdin.write(chunk)
+        try:
+            proc.stdin.close()
+        except Exception:
+            pass
+
+        stdout, stderr = proc.communicate(timeout=1200)
+        t1 = time.perf_counter()
+
+        if proc.returncode != 0:
+            err_txt = stderr.decode("utf-8", errors="ignore") if stderr else ""
+            app.logger.error(
+                "ffmpeg (pipe) failed rc=%s bytes=%s err=\n%s",
+                proc.returncode,
+                total_bytes,
+                err_txt,
+            )
+            return jsonify({"error": "ffmpeg failed", "detail": err_txt}), 500
+
+        app.logger.info(
+            f"ffmpeg (pipe) ok in {t1 - t0:.3f}s; received {total_bytes} bytes"
+        )
+        with open(out_path, "rb") as f:
+            video_b64 = base64.b64encode(f.read()).decode("utf-8")
+        return jsonify({"video": video_b64}), 200
+    except Exception as e:
+        app.logger.exception("/encode_pipe error: %s", e)
+        return jsonify({"error": str(e)}), 500
+    finally:
+        try:
+            os.remove(out_path)
+        except Exception:
+            pass
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "8080")))
