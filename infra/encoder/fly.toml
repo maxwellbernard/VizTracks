@@ -1,0 +1,33 @@
+app = "spotify-animation-encoder"
+primary_region = "ord"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ['app']
+
+  [http_service.http_options]
+  idle_timeout = 900
+
+[[checks]]
+  name = "health"
+  type = "http"
+  port = 8080
+  interval = "10s"
+  timeout = "2s"
+  grace_period = "60s"
+  method = "GET"
+  path = "/health"
+
+[[vm]]
+  gpu_kind = "l40s"
+  gpus = 1
+  cpu_kind = "performance"
+  cpus = 4
+  memory = "16gb"
