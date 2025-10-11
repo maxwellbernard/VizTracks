@@ -86,7 +86,7 @@ def encode_animation_remote(anim, out_path: str, fps: int) -> bool:
         if not wait_for_ready(base):
             print("[WARN] Encoder health did not become ready before deadline")
             return False
-        time.sleep(2)
+        time.sleep(5)
 
         url = base + f"/encode_pipe?fps={int(fps)}"
         headers = {
@@ -105,6 +105,9 @@ def encode_animation_remote(anim, out_path: str, fps: int) -> bool:
                 fig.savefig(buf, format="png", facecolor="#F0F0F0", dpi=fig.dpi)
                 tmp.write(buf.getvalue())
             size = tmp.tell()
+        # Force Content-Length and hint 100-continue to avoid proxy replay of large bodies
+        headers["Content-Length"] = str(size)
+        headers["Expect"] = "100-continue"
 
         def do_post_file():
             with open(tmp_path, "rb") as f:
@@ -115,24 +118,42 @@ def encode_animation_remote(anim, out_path: str, fps: int) -> bool:
                     timeout=1200,
                 )
 
-        try:
-            resp = do_post_file()
-            resp.raise_for_status()
-        except (req_exc.ConnectionError, req_exc.Timeout, req_exc.HTTPError) as e:
-            status = getattr(getattr(e, "response", None), "status_code", None)
-            # One safe retry on cold-start/proxy errors
-            if status in (502, 503, 504) or isinstance(
-                e, (req_exc.ConnectionError, req_exc.Timeout)
-            ):
-                time.sleep(2)
-                if not wait_for_ready(base, deadline_sec=30):
-                    print("[WARN] Encoder not ready on retry window")
-                    return False
-                time.sleep(2)
+        attempts = 3
+        last_exc: Exception | None = None
+        for attempt in range(1, attempts + 1):
+            try:
                 resp = do_post_file()
                 resp.raise_for_status()
+                last_exc = None
+                break
+            except (req_exc.ConnectionError, req_exc.Timeout, req_exc.HTTPError) as e:
+                status = getattr(getattr(e, "response", None), "status_code", None)
+                retriable = status in (502, 503, 504) or isinstance(
+                    e, (req_exc.ConnectionError, req_exc.Timeout)
+                )
+                last_exc = e
+                if not retriable or attempt == attempts:
+                    break
+                time.sleep(3)
+                if not wait_for_ready(base, deadline_sec=30):
+                    print("[WARN] Encoder not ready during retry window")
+                time.sleep(5)
+        if last_exc:
+
+            if (
+                isinstance(last_exc, req_exc.HTTPError)
+                and last_exc.response is not None
+            ):
+                try:
+                    detail = last_exc.response.text
+                except Exception:
+                    detail = "<no response body>"
+                print(
+                    f"[WARN] Remote encoder HTTPError: {last_exc} body={detail[:512]}"
+                )
             else:
-                raise
+                print(f"[WARN] Remote encoder error: {last_exc}")
+            return False
 
         data = resp.json()
         video_b64 = data.get("video")
