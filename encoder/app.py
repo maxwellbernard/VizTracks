@@ -10,8 +10,23 @@ app = Flask(__name__)
 _level = os.getenv("LOG_LEVEL", "INFO").upper()
 app.logger.setLevel(getattr(logging, _level, logging.INFO))
 
-# flag that becomes True after NVENC check completes
-READY = False
+READY: bool | None = None
+
+
+def nvenc_ready_cached() -> bool:
+    global READY
+    if READY is True:
+        return True
+    try:
+        import subprocess
+
+        accels = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-hwaccels"], capture_output=True, text=True
+        )
+        READY = accels.returncode == 0 and ("cuda" in accels.stdout.lower())
+    except Exception:
+        READY = False
+    return bool(READY)
 
 
 def get_ffmpeg_args(fps: int) -> list[str]:
@@ -49,13 +64,15 @@ def root():
 
 @app.get("/health")
 def health():
-    if READY:
+    if nvenc_ready_cached():
         return jsonify({"status": "ok"}), 200
     return jsonify({"status": "starting"}), 503
 
 
 @app.post("/encode")
 def encode():
+    if not nvenc_ready_cached():
+        return jsonify({"error": "starting"}), 503
     data = request.get_json(force=True)
     fps = int(data.get("fps", 28))
     frames_b64: List[str] = data.get("frames", [])
@@ -158,6 +175,8 @@ def encode_pipe():
       - JSON { video: base64 MP4 }
     """
     try:
+        if not nvenc_ready_cached():
+            return jsonify({"error": "starting"}), 503
         fps = int(request.args.get("fps", 28))
     except Exception:
         fps = 28
