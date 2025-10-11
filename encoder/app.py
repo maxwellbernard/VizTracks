@@ -218,12 +218,34 @@ def encode_pipe():
         total_bytes = 0
         t0 = time.perf_counter()
         chunk_size = 65536
+        # Per-frame progress
+        PNG_SIG = b"\x89PNG\r\n\x1a\n"
+        sig_len = len(PNG_SIG)
+        carry = b""
+        frame_count = 0
         while True:
             chunk = request.stream.read(chunk_size)
             if not chunk:
                 break
+            scan_buf = carry + chunk
+            idx = 0
+            while True:
+                hit = scan_buf.find(PNG_SIG, idx)
+                if hit == -1:
+                    break
+                frame_count += 1
+                app.logger.info(
+                    f"pipe: wrote frame {frame_count} (chunk={len(chunk)} bytes, total={total_bytes})"
+                )
+                idx = hit + sig_len
+
             total_bytes += len(chunk)
             proc.stdin.write(chunk)
+            carry = (
+                scan_buf[-(sig_len - 1) :]
+                if len(scan_buf) >= (sig_len - 1)
+                else scan_buf
+            )
         try:
             proc.stdin.close()
         except Exception:
