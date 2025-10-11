@@ -7,6 +7,7 @@ app = 'spotify-animation'
 primary_region = 'arn'
 
 [build]
+  dockerfile = "infra/Dockerfile"
 
 [http_service]
   internal_port = 8080
