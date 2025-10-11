@@ -12,6 +12,15 @@ bp = Blueprint("uploads", __name__)
 
 @bp.route("/process", methods=["POST"])
 def process_zip():
+    """Ingest a Spotify ZIP upload and create a DuckDB session.
+
+    Args:
+        None. Reads the uploaded file from the multipart form field named ``file``.
+
+    Returns:
+        flask.Response: JSON with ``session_id``, ``data_min_date``, and ``data_max_date`` on success.
+        4xx/5xx with ``error`` message on failure or when the server is busy.
+    """
     cleanup_old_sessions()
     # Limit concurrent sessions
     session_files = [f for f in os.listdir(UPLOAD_DIR) if f.endswith(".duckdb")]

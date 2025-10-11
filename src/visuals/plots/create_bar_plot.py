@@ -38,7 +38,23 @@ def plot_final_frame(
     image_cache=image_cache,
     error_logged=error_logged,
 ) -> None:
-    """Create a static plot of the final frame of the bar chart animation."""
+    """Create a static plot of the final frame of the bar chart animation.
+
+    Args:
+        df: Aggregated data for the selected window.
+        top_n: Number of bars to draw.
+        analysis_metric: "Streams" or "duration_ms".
+        selected_attribute: artist_name, track_name, or album_name.
+        start_date: Inclusive start bound for labels.
+        end_date: Inclusive end bound for labels.
+        period: Resample period used upstream (informational).
+        days: Smoothing window used upstream (informational).
+        image_cache: Cache of images and colors.
+        error_logged: Set used to avoid duplicate error logs.
+
+    Returns:
+        The generated Matplotlib figure for further processing or saving.
+    """
     if image_cache is None:
         image_cache = {}
     if error_logged is None:
@@ -151,7 +167,7 @@ def plot_final_frame(
     ax.xaxis.label.set_fontproperties(font_path_labels)
     ax.xaxis.label.set_size(18)
     ax.xaxis.set_label_coords(-0.95, -0.05)
-    setup_bar_plot_style(ax, top_n, analysis_metric)
+    setup_bar_plot_style(ax)
 
     fig.text(
         0.632,  # corner was 98
@@ -224,9 +240,7 @@ def plot_final_frame(
     def process_images_with_batch_api(
         names, top_n_df, selected_attribute, item_type, top_n
     ) -> None:
-        """
-        Process images using batch API + parallel downloads for efficiency.
-        """
+        """Process images using batch API + parallel downloads for efficiency."""
         items_to_fetch = []
         cache_keys = []
 
@@ -307,7 +321,7 @@ def plot_final_frame(
                 pass
 
     def _download_and_cache_image(task) -> bool:
-        """Download and cache a single image - designed for parallel execution"""
+        """Download and cache a single image. Designed for parallel execution."""
         name = task["name"]
         cache_key = task["cache_key"]
         image_url = task["image_url"]

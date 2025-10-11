@@ -15,6 +15,16 @@ bp = Blueprint("images", __name__)
 
 @bp.route("/generate_image", methods=["POST"])
 def generate_image():
+    """Generate a static bar plot image for the requested selection and metric.
+
+    Args:
+        None. Reads JSON body with keys: ``session_id``, ``selected_attribute``,
+        ``analysis_metric``, ``top_n``, ``start_date``, ``end_date``.
+
+    Returns:
+        flask.Response: JSON with Base64-encoded ``image`` and ``filename``.
+        4xx/5xx with ``error`` message if the session is missing or processing fails.
+    """
     cleanup_old_sessions()
     try:
         log_mem("Start /generate_image")

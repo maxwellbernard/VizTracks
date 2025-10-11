@@ -26,13 +26,13 @@ from src.visuals import (
     image_cache,
     setup_bar_plot_style,
 )
+from src.visuals.anims.state import AnimationState
 from src.visuals.core.constants import RESAMPLING_FILTER
 from src.visuals.core.constants import days as _DEFAULT_DAYS
 from src.visuals.core.constants import dpi as _DEFAULT_DPI
 from src.visuals.core.constants import figsize as _DEFAULT_FIGSIZE
 from src.visuals.core.constants import interp_steps as _DEFAULT_INTERP_STEPS
 from src.visuals.core.constants import period as _DEFAULT_PERIOD
-from src.visuals.state import AnimationState
 
 # Re-export defaults for external imports (e.g., frontend uses these)
 days = _DEFAULT_DAYS
@@ -50,8 +50,9 @@ warnings.filterwarnings(
 def preload_images_batch(
     names, monthly_df, selected_attribute, item_type, top_n, target_size=200
 ) -> None:
-    """
-    Preload images using batch API + parallel downloads - same as create_bar_plot.py
+    """Preload images via batch API and parallel downloads.
+
+    Mirrors logic from the static plot to keep caching consistent.
     """
     items_to_fetch = []
     cache_keys = []
@@ -178,7 +179,7 @@ def preload_images_batch(
 
 def _download_and_cache_image(task) -> bool:
     start_time = time.time()
-    """Download and cache a single image - designed for parallel execution"""
+    """Download and cache a single image. Designed for parallel execution."""
     name = task["name"]
     cache_key = task["cache_key"]
     image_url = task["image_url"]
@@ -208,8 +209,12 @@ def precompute_data(
     monthly_df, selected_attribute, analysis_metric, top_n, start_date, end_date
 ) -> tuple:
     start_time = time.time()
-    print("[DEBUG] precompute_data: start")
-    """Precompute cumulative data and rankings for all timestamps."""
+    """Precompute cumulative data and rankings for all timestamps.
+
+    Returns:
+        tuple[list[pandas.Timestamp], dict]: (timestamps, precomputed_data)
+        where precomputed_data maps timestamp -> dict(widths, labels, names, artist_names)
+    """
 
     monthly_df["Date"] = monthly_df["Date"].dt.to_timestamp()
     # skip first 3 days for cleaner inital frame
@@ -351,12 +356,14 @@ def create_bar_animation(
 ) -> animation.FuncAnimation:
     start_time = time.time()
     print("[DEBUG] create_bar_animation: start")
-    """Prepare the bar chart animation with optimized runtime."""
+    """Prepare the bar chart animation with optimized runtime.
+
+    Returns:
+        matplotlib.animation.FuncAnimation: Configured animation object.
+    """
     t0 = time.time()
-    # Figure setup
-    # fig, ax = plt.subplots(figsize=(16, 21.2), dpi=dpi)
     fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
-    fig.patch.set_facecolor("#F0F0F0")  # light gray
+    fig.patch.set_facecolor("#F0F0F0")
     plt.subplots_adjust(left=0.27, right=0.85, top=0.8, bottom=0.13)
     t1 = time.time()
     print(f"Time for figure setup: {t1 - t0:.2f} seconds")
@@ -379,7 +386,7 @@ def create_bar_animation(
         fontproperties=font_prop_heading,
     )
     fig.text(
-        0.60,  # corener was 98
+        0.60,
         0.060,
         "www.viztracks.com",
         ha="right",
@@ -387,7 +394,6 @@ def create_bar_animation(
         fontproperties=font_prop_heading,
         fontsize=24,
         color="#bed1bc",
-        # color="#888888",
         transform=fig.transFigure,
     )
 
@@ -485,7 +491,6 @@ def create_bar_animation(
         initial_positions = [-1] * top_n
 
     # Precomputed target positions were unused; removed to reduce lint noise.
-
     initial_labels = [""] * top_n
     bars = ax.barh(
         initial_positions,
@@ -500,7 +505,7 @@ def create_bar_animation(
     ax.xaxis.label.set_fontproperties(font_path_labels)
     ax.xaxis.label.set_size(18)
     ax.xaxis.set_label_coords(-0.95, -0.05)
-    setup_bar_plot_style(ax, top_n, analysis_metric)
+    setup_bar_plot_style(ax)
 
     top_gap = 0.3
     bottom_gap = 0.2
@@ -695,7 +700,6 @@ def create_bar_animation(
         sub_step = frame % interp_steps
         current_time = timestamps[main_frame]
 
-        t_start = time.time()
         # Use precomputed data
         data = precomputed_data[current_time]
         widths = data["widths"]
@@ -944,8 +948,8 @@ def create_bar_animation(
         # update year and month text
         year_text.set_text(f"{current_time.year}")
         month_text.set_text(f"{current_time.strftime('%B')}")
-        t_text = time.time()
-        print(f"[TIMING] frame={frame} total={t_text - t_start:.4f}s")
+        # t_text = time.time()
+        # print(f"[TIMING] frame={frame} total={t_text - t_start:.4f}s")
 
     t7 = time.time()
     print(f"Time for animation setup: {t7 - t6:.2f} seconds")

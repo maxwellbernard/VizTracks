@@ -10,7 +10,22 @@ import polars as pl
 from backend.core.config import UPLOAD_DIR
 
 
-def insert_jsons_from_zip_to_duckdb(zip_path, session_id=None):
+def insert_jsons_from_zip_to_duckdb(
+    zip_path: str, session_id: str | None = None
+) -> tuple[str, pd.Timestamp | None, pd.Timestamp | None]:
+    """Ingest Spotify JSONs from a zip into a per-session DuckDB database.
+
+    Filters out plays under 30 seconds. Creates or appends to a table named
+    ``spotify_data`` with typed columns.
+
+    Args:
+        zip_path: Path to the uploaded zip file containing JSONs.
+        session_id: Optional session id. If None, generates a UUID.
+
+    Returns:
+        The session_id used, and the min/max Date found in the ingested data
+        (None if no rows).
+    """
     if session_id is None:
         session_id = str(uuid.uuid4())
     db_path = os.path.join(UPLOAD_DIR, f"spotify_session_{session_id}.duckdb")
@@ -77,8 +92,26 @@ def insert_jsons_from_zip_to_duckdb(zip_path, session_id=None):
 
 
 def query_user_duckdb(
-    session_id, selected_attribute, analysis_metric, start_date, end_date, top_n
-):
+    session_id: str,
+    selected_attribute: str,
+    analysis_metric: str,
+    start_date: str | pd.Timestamp,
+    end_date: str | pd.Timestamp,
+    top_n: int,
+) -> pd.DataFrame | None:
+    """Return a top-N aggregate for the specified attribute and metric.
+
+    Args:
+        session_id: Session identifier for DuckDB file.
+        selected_attribute: One of artist_name, track_name, album_name.
+        analysis_metric: "Streams" or "duration_ms".
+        start_date: Inclusive start date.
+        end_date: Inclusive end date.
+        top_n: Number of rows to return.
+
+    Returns:
+        Aggregated result, or None if DB is missing.
+    """
     db_path = os.path.join(UPLOAD_DIR, f"spotify_session_{session_id}.duckdb")
     if not os.path.exists(db_path):
         return None
@@ -120,13 +153,29 @@ def query_user_duckdb(
 
 
 def query_user_duckdb_for_animation(
-    session_id,
-    selected_attribute,
-    analysis_metric,
-    start_date,
-    end_date,
-    filter_number=100,
-):
+    session_id: str,
+    selected_attribute: str,
+    analysis_metric: str,
+    start_date: str | pd.Timestamp,
+    end_date: str | pd.Timestamp,
+    filter_number: int = 100,
+) -> pd.DataFrame | None:
+    """Return a time-indexed dataset suitable for animation frames.
+
+    Selects top entities within the window, then returns daily rows per entity
+    with both per-day metric and a cumulative metric for smoother animations.
+
+    Args:
+        session_id: Session identifier for DuckDB file.
+        selected_attribute: artist_name, track_name, or album_name.
+        analysis_metric: "Streams" or "duration_ms".
+        start_date: Inclusive start date.
+        end_date: Inclusive end date.
+        filter_number: Count of top entities to keep in the window.
+
+    Returns:
+        Long-form result by entity and date, or None if DB is missing.
+    """
     db_path = os.path.join(UPLOAD_DIR, f"spotify_session_{session_id}.duckdb")
     if not os.path.exists(db_path):
         return None

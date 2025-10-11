@@ -1,16 +1,14 @@
 """Image fetch utilities for Spotify items with batch endpoints."""
 
-from __future__ import annotations
-
 import os
 import time
-from typing import Dict, List
 
 import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
 
 
 def _spotify_client() -> spotipy.Spotify:
+    """Create a Spotipy client using client-credentials from env vars."""
     client_id = os.getenv("SPOTIFY_CLIENT_ID")
     client_secret = os.getenv("SPOTIFY_CLIENT_SECRET")
     client_credentials_manager = SpotifyClientCredentials(
@@ -19,13 +17,18 @@ def _spotify_client() -> spotipy.Spotify:
     return spotipy.Spotify(client_credentials_manager=client_credentials_manager)
 
 
-def fetch_images_batch(items_data: List[Dict], target_size: int) -> Dict[str, str]:
+def fetch_images_batch(items_data: list[dict], target_size: int) -> dict[str, str]:
     """Fetch images in batches using Spotify's batch endpoints.
 
-    Returns a mapping cache_key -> image_url.
+    Args:
+        items_data: List of dicts with at least {name,type,cache_key,track_uri?}.
+        target_size: Preferred minimum image height in pixels.
+
+    Returns:
+        dict[str, str]: Mapping of cache key or identifier to image URL.
     """
     sp = _spotify_client()
-    image_urls: Dict[str, str] = {}
+    image_urls: dict[str, str] = {}
 
     tracks: list[dict] = []
     albums: list[dict] = []
@@ -61,9 +64,10 @@ def fetch_images_batch(items_data: List[Dict], target_size: int) -> Dict[str, st
 
 
 def _fetch_tracks_batch(
-    sp: spotipy.Spotify, track_uris: List[str], target_size: int
-) -> Dict[str, str]:
-    image_urls: Dict[str, str] = {}
+    sp: spotipy.Spotify, track_uris: list[str], target_size: int
+) -> dict[str, str]:
+    """Fetch album images for multiple tracks using tracks(batch) API."""
+    image_urls: dict[str, str] = {}
     for i in range(0, len(track_uris), 50):
         batch = track_uris[i : i + 50]
         try:
@@ -92,14 +96,15 @@ def _fetch_tracks_batch(
 
 
 def _fetch_artists_from_tracks_batch(
-    sp: spotipy.Spotify, artist_items: List[Dict]
-) -> Dict[str, str]:
-    image_urls: Dict[str, str] = {}
+    sp: spotipy.Spotify, artist_items: list[dict]
+) -> dict[str, str]:
+    """Map artist names (from track context) to their image URLs using batch APIs."""
+    image_urls: dict[str, str] = {}
 
     track_ids = [item["track_uri"] for item in artist_items]
     uri_to_name = {item["track_uri"]: item["name"] for item in artist_items}
 
-    artist_id_to_name: Dict[str, str] = {}
+    artist_id_to_name: dict[str, str] = {}
     all_artist_ids: list[str] = []
 
     for i in range(0, len(track_ids), 50):

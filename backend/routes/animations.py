@@ -20,6 +20,27 @@ bp = Blueprint("animations", __name__)
 
 @bp.route("/generate_animation", methods=["POST"])
 def generate_animation():
+    """Generate an MP4 bar-race animation for the given selection and metric.
+
+    Expects a JSON body with:
+    - session_id (str): Upload/session identifier.
+    - selected_attribute (str): One of artist_name, track_name, album_name.
+    - analysis_metric (str): "Streams" or "duration_ms".
+    - top_n (int, optional): Number of entities to display. Defaults to 5.
+    - start_date (str): ISO date (YYYY-MM-DD) inclusive.
+    - end_date (str): ISO date (YYYY-MM-DD) inclusive.
+    - speed_for_bar_animation (int, optional): FPS for encoding. Defaults to 28.
+    - days (int, optional): Interpolation window size. Defaults to 30.
+    - interp_steps (int, optional): Steps between points. Defaults to 14.
+    - period (str, optional): Resample period (e.g., 'd', 'M'). Defaults to 'd'.
+    - dpi (int, optional): Figure DPI for frames. Defaults to 10.
+    - figsize (tuple[float, float], optional): Figure size in inches.
+
+    Returns:
+        flask.Response: JSON containing base64-encoded MP4 under key "video"
+        and a suggested filename under key "filename". Returns 400 if the session
+        is missing/expired, or 500 with an error message on failure.
+    """
     try:
         t0 = time.time()
         log_mem("Start /generate_animation")

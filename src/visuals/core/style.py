@@ -3,11 +3,15 @@
 import matplotlib.pyplot as plt
 
 
-def setup_bar_plot_style(
-    ax: plt.Axes,
-    top_n: int = 10,
-    analysis_metric: str = "Streams",
-) -> None:
+def setup_bar_plot_style(ax: plt.Axes) -> None:
+    """Apply consistent styling to a bar chart axes.
+
+    Args:
+        ax: Matplotlib Axes to style.
+
+    Returns:
+        None. Mutates the provided axes in place.
+    """
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.spines["bottom"].set_visible(False)

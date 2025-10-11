@@ -6,7 +6,12 @@ from matplotlib.font_manager import FontProperties
 
 
 def get_fonts() -> tuple[FontProperties, FontProperties]:
-    """Load custom fonts for the plot and return (heading, labels)."""
+    """Load custom fonts used across plots.
+
+    Returns:
+        tuple[FontProperties, FontProperties]: (heading_font, label_font)
+        configured to use Montserrat faces bundled under assets/fonts.
+    """
     font_path_heading = os.path.join(
         os.getcwd(), "assets", "fonts", "Montserrat-Bold.ttf"
     )
