@@ -30,9 +30,9 @@ import pandas as pd
 import requests
 import streamlit as st
 
-from modules.create_bar_animation import days, dpi, figsize, interp_steps, period
-from modules.normalize_inputs import normalize_inputs
-from modules.supabase_client import supabase
+from src.data.normalize_inputs import normalize_inputs
+from src.services.supabase_client import supabase
+from src.visuals.anims.create_bar_animation import days, dpi, figsize, interp_steps, period
 
 st.set_page_config(
     page_title="Viztrack Studio",
@@ -346,11 +346,13 @@ selected_attribute, analysis_metric = normalize_inputs(
 st.markdown(
     """
     <div style="text-align: center;">
-        <img src="data:image/svg+xml;base64,{}" width="235">
+        <img src="data:image/svg+xml;base64,{}" width="215">
     </div>
     """.format(
         base64.b64encode(
-            open("2024 Spotify Brand Assets/spotify_full_logo_black.svg", "rb").read()
+            open(
+                "assets/2024 Spotify Brand Assets/spotify_full_logo_black.svg", "rb"
+            ).read()
         ).decode()
     ),
     unsafe_allow_html=True,
@@ -365,10 +367,36 @@ st.markdown(
                background: linear-gradient(90deg, #1DB954, #1ED760, #00FFA3, #1DB954);
                -webkit-background-clip: text;
                -webkit-text-fill-color: transparent;
-               letter-spacing: 1.5px;
-               margin-bottom: 0.01em;
+               letter-spacing: 2px;
+               margin-bottom: -1.1em;
+               margin-right: -0.5em;
                background-size: 300% 300%;'>
-        Viztrack Studio
+        Viztrack
+    </h1>
+    <style>
+        @keyframes gradient-shift {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+st.markdown(
+    """
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@700&display=swap" rel="stylesheet">
+    <h1 style='text-align: center;
+               font-family: "Fredoka", sans-serif;
+               font-size: 48px;
+               background: linear-gradient(90deg, #1DB954, #1ED760, #00FFA3, #1DB954);
+               -webkit-background-clip: text;
+               -webkit-text-fill-color: transparent;
+               letter-spacing: 2px;
+               margin-bottom: 0.1em;
+               margin-right: -0.5em;
+               background-size: 300% 300%;'>
+        Studio
     </h1>
     <style>
         @keyframes gradient-shift {
@@ -389,22 +417,13 @@ st.markdown(
                color: #888888;
                letter-spacing: 1.5px;
                margin-top: -1.3em;
-               margin-bottom: 2em;'>
+               margin-bottom: 1em;'>
         Interactive visuals powered by your music
     </h1>
     """,
     unsafe_allow_html=True,
 )
 
-st.markdown(
-    """
-    <div style="text-align: center;">
-        <p><strong>🎵 Upload your own Spotify data to create Visualisations of your entire
-          listening history! 🎵</strong></p>
-    </div>
-""",
-    unsafe_allow_html=True,
-)
 
 col1, col2, col3, col4 = st.columns(4)
 with col1:
@@ -524,23 +543,32 @@ with col4:
     )
 st.markdown("<br>", unsafe_allow_html=True)
 
-with st.expander("Click here to see what my Visualisations look like!"):
+st.markdown(
+    """
+    <div style="text-align: center; color: #888888;">
+        <p>Use the top left menu to set your preferences</p>
+    </div>
+""",
+    unsafe_allow_html=True,
+)
+
+with st.expander("**Click here to see what my visualisations look like!**"):
     st.markdown("<br>", unsafe_allow_html=True)
     col1, col2 = st.columns(2)
     with col1:
         st.markdown(
-            "<h5 style='text-align: center;'>Bar Chart Race &nbsp;🎥</h4>",
+            "<h5 style='text-align: center;'>Bar Chart Race &nbsp;🎥</h5>",
             unsafe_allow_html=True,
         )
         # st.video("artist_name_Streams_animation (7).mp4")
-        st.video("./visuals/artist_name_Streams_animation_final.mp4")
+        st.video("./assets/visuals/artist_name_Streams_animation_final.mp4")
 
     with col2:
         st.markdown(
             "<h5 style='text-align: center;'>Bar Chart Image &nbsp;📸</h4>",
             unsafe_allow_html=True,
         )
-        st.image("./visuals/album_name_Streams_visual_max.jpg")
+        st.image("./assets/visuals/album_name_Streams_visual_max.jpg")
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -594,7 +622,7 @@ with st.expander(
         )
 
     with col2:
-        st.image("./visuals/download_guide.png", width=450)
+        st.image("./assets/visuals/download_guide.png", width=450)
 
 
 uploaded_file = st.file_uploader(
@@ -602,8 +630,10 @@ uploaded_file = st.file_uploader(
 )
 
 if uploaded_file and not st.session_state.form_values["data_uploaded"]:
-    with st.spinner("Uploading and processing your data..."):
+    with st.spinner("Crunching your Spotify jams... Hold tight"):
         response = send_file_to_backend(uploaded_file)
+        # st.markdown("Status code:", response.status_code)
+        # st.markdown("Response text:", response.text)
 
     if response.status_code == 200:
         try:
@@ -622,17 +652,19 @@ if uploaded_file and not st.session_state.form_values["data_uploaded"]:
                     "data_uploaded": True,
                 }
             )
-            st.success("History uploaded successfully! 🎉")
+            st.success(
+                "History uploaded successfully! 🎉 Ready to visualize your jams 🎶"
+            )
             st.rerun()
         except Exception as e:
             st.error(f"Error parsing response: {str(e)}")
 
     else:
         st.error(
-            "Failed to process file. Please make sure you uploaded the correct ZIP file from Spotify."
+            "Failed to process file. Please make sure you uploaded the correct **ZIP file** from Spotify and not the extracted files."
         )
 elif uploaded_file and st.session_state.form_values["data_uploaded"]:
-    st.success("History uploaded successfully! 🎉")
+    st.success("Upload successful! Ready to visualize your jams 🎶 🎉")
 
 else:
     st.warning("Please upload your Spotify ZIP file to proceed.")
@@ -833,7 +865,7 @@ if st.button("Generate Animation", key="generate_animation_button"):
             with st.spinner("Generating animation..."):
                 message_placeholder = st.empty()
                 message_placeholder.write(
-                    "Hold tight, this may take a few minutes if your data covers many years 😬"
+                    "Hold tight, this may take a few minutes if your data covers many years (around 1 minute per year) 😬"
                 )
                 response = send_animation_request_to_backend(
                     st.session_state.session_id,

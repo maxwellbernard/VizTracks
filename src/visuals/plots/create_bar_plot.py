@@ -6,7 +6,6 @@ and handle image fetching and caching.
 
 import os
 import textwrap
-import time
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 
@@ -17,7 +16,7 @@ import requests
 from matplotlib.offsetbox import AnnotationBbox, OffsetImage
 from PIL import Image
 
-from modules.prepare_visuals import (
+from src.visuals import (
     error_logged,
     fetch_images_batch,
     get_dominant_color,

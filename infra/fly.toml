@@ -22,4 +22,4 @@ primary_region = 'arn'
 [[vm]]
   memory = '16gb'
   cpu_kind = 'performance'
-  cpus = 8
+  cpus = 4

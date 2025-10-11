@@ -19,34 +19,37 @@ import requests
 from matplotlib.offsetbox import AnnotationBbox, OffsetImage
 from PIL import Image
 
-from modules.prepare_visuals import (
+from src.visuals import (
     fetch_images_batch,
     get_dominant_color,
     get_fonts,
     image_cache,
     setup_bar_plot_style,
 )
-from modules.state import AnimationState
+from src.visuals.core.constants import RESAMPLING_FILTER
+from src.visuals.core.constants import days as _DEFAULT_DAYS
+from src.visuals.core.constants import dpi as _DEFAULT_DPI
+from src.visuals.core.constants import figsize as _DEFAULT_FIGSIZE
+from src.visuals.core.constants import interp_steps as _DEFAULT_INTERP_STEPS
+from src.visuals.core.constants import period as _DEFAULT_PERIOD
+from src.visuals.state import AnimationState
+
+# Re-export defaults for external imports (e.g., frontend uses these)
+days = _DEFAULT_DAYS
+dpi = _DEFAULT_DPI
+figsize = _DEFAULT_FIGSIZE
+interp_steps = _DEFAULT_INTERP_STEPS
+period = _DEFAULT_PERIOD
 
 warnings.filterwarnings(
     "ignore",
     category=UserWarning,
 )
 
-days = 30
-dpi = 72
-figsize = (16, 21.2)
-# figsize = (10, 13.25)
-# figsize = (7.55, 10)
-interp_steps = 17
-period = "d"
-RESAMPLING_FILTER = Image.Resampling.BILINEAR
-
 
 def preload_images_batch(
     names, monthly_df, selected_attribute, item_type, top_n, target_size=200
 ) -> None:
-    start_time = time.time()
     """
     Preload images using batch API + parallel downloads - same as create_bar_plot.py
     """
@@ -171,8 +174,6 @@ def preload_images_batch(
     for name, cache_key in zip(names, cache_keys):
         if cache_key in image_cache:
             pass
-    elapsed = time.time() - start_time
-    # print(f"[DEBUG] preload_images_batch: end ({elapsed:.2f} seconds)")
 
 
 def _download_and_cache_image(task) -> bool:
@@ -479,10 +480,7 @@ def create_bar_animation(
     else:
         initial_positions = [-1] * top_n
 
-    if top_n == 1:
-        target_positions_init = [4.5]
-    else:
-        target_positions_init = [8.9 - i * (8.6 / (top_n - 1)) for i in range(top_n)]
+    # Precomputed target positions were unused; removed to reduce lint noise.
 
     initial_labels = [""] * top_n
     bars = ax.barh(
@@ -637,9 +635,7 @@ def create_bar_animation(
         .nlargest(top_n, f"Cumulative_{analysis_metric}")
         .sort_values(f"Cumulative_{analysis_metric}", ascending=False)
     )
-    initial_widths = initial_top_sorted[f"Cumulative_{analysis_metric}"].tolist() + [
-        0
-    ] * (top_n - len(initial_top_sorted))
+    # Initial widths are directly derived in the first frame; removing unused variable.
 
     if selected_attribute == "track_name":
         initial_labels = [
@@ -702,13 +698,11 @@ def create_bar_animation(
         labels = data["labels"]
         names = data["names"]
         artist_names = data["artist_names"]
-        t_data = time.time()
 
         if top_n == 1:
             target_positions = [4.5]
         else:
             target_positions = [8.9 - i * (8.6 / (top_n - 1)) for i in range(top_n)]
-        t_positions = time.time()
 
         if sub_step == 0:
             if frame == 0:
@@ -736,7 +730,6 @@ def create_bar_animation(
         else:
             new_positions = anim_state.current_new_positions[:]
             start_positions = anim_state.prev_interp_positions[:]
-        t_mapping = time.time()
 
         t = sub_step / (interp_steps - 1) if interp_steps > 1 else 1.0
         t_eased = quadratic_ease_in_out(t)
@@ -761,7 +754,6 @@ def create_bar_animation(
             )
             for i in range(top_n)
         ]
-        t_interp = time.time()
 
         max_width = max(interp_widths) if interp_widths else 1
 
@@ -795,7 +787,6 @@ def create_bar_animation(
             else:
                 display_widths.append(0)
                 active_bars.append(False)
-        t_bars = time.time()
 
         # handle first frame specially
         if frame == 0 and sub_step == 0:
@@ -812,7 +803,6 @@ def create_bar_animation(
                 bar.set_width(0)
                 bar.set_y(-1)  # Move off-screen
                 bar.set_visible(False)  # Hide completely
-        t_bar_draw = time.time()
 
         max_value = max(display_widths) if display_widths else 1
         offset = max(0.01, max_value * 0.03)
@@ -834,7 +824,6 @@ def create_bar_animation(
             label_fontsize = top_n_label_fontsize_mapping.get(top_n, 22)
         else:
             label_fontsize = 22
-        t_label_font = time.time()
 
         for i in range(top_n):
             name = names[i] if i < len(names) else ""
@@ -935,7 +924,6 @@ def create_bar_animation(
                 artist_label_objects[i].set_visible(False)
                 image_annotations[i].set_visible(False)
                 anim_state.last_img_obj[i] = None
-        t_images = time.time()
 
         # update the state for the next frame
         if sub_step == interp_steps - 1:
@@ -945,20 +933,15 @@ def create_bar_animation(
             anim_state.prev_interp_positions = target_positions[:]
         else:
             anim_state.prev_interp_positions = interp_positions[:]
-        t_state = time.time()
 
         ax.set_yticks([])
         ax.set_xlim(0, max(display_widths) * 1.1)
-        t_axes = time.time()
 
         # update year and month text
         year_text.set_text(f"{current_time.year}")
         month_text.set_text(f"{current_time.strftime('%B')}")
         t_text = time.time()
-
-        print(
-            f"[TIMING] frame={frame} data={t_data - t_start:.4f}s pos={t_positions - t_data:.4f}s map={t_mapping - t_positions:.4f}s interp={t_interp - t_mapping:.4f}s bars={t_bars - t_interp:.4f}s bar_draw={t_bar_draw - t_bars:.4f}s label_font={t_label_font - t_bar_draw:.4f}s images={t_images - t_label_font:.4f}s state={t_state - t_images:.4f}s axes={t_axes - t_state:.4f}s text={t_text - t_axes:.4f}s total={t_text - t_start:.4f}s"
-        )
+        print(f"[TIMING] frame={frame} total={t_text - t_start:.4f}s")
 
     t7 = time.time()
     print(f"Time for animation setup: {t7 - t6:.2f} seconds")
