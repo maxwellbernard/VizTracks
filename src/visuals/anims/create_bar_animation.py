@@ -392,10 +392,13 @@ def create_bar_animation(
     )
 
     # Load Spotify Image
-    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    repo_root = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "..")
+    )
     img_path = os.path.join(
         repo_root,
         "assets",
+        "2024 Spotify Brand Assets",
         "Spotify_Full_Logo_RGB_Green.png",
     )
     img = mpimg.imread(img_path)

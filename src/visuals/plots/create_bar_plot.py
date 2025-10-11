@@ -72,6 +72,7 @@ def plot_final_frame(
     img_path = os.path.join(
         repo_root,
         "assets",
+        "2024 Spotify Brand Assets",
         "Spotify_Full_Logo_RGB_Green.png",
     )
     img = mpimg.imread(img_path)
