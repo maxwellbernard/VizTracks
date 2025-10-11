@@ -5,6 +5,7 @@ from typing import Iterator
 
 import matplotlib.pyplot as plt
 import requests
+from requests import exceptions as req_exc
 
 from backend.core.config import ENCODER_URL
 
@@ -60,25 +61,59 @@ def encode_animation_remote(anim, out_path: str, fps: int) -> bool:
     """
     if not ENCODER_URL:
         return False
-    try:
-        base = ENCODER_URL.rstrip("/")
-        try:
-            health = requests.get(f"{base}/health", timeout=5)
-            health.raise_for_status()
-        except Exception:
+
+    def wait_for_ready(base: str, deadline_sec: int = 90) -> bool:
+        start = time.monotonic()
+        attempt = 0
+        while time.monotonic() - start < deadline_sec:
+            attempt += 1
+            try:
+                r = requests.get(f"{base}/health", timeout=5)
+                if r.ok:
+                    return True
+            except Exception:
+                pass
             time.sleep(2)
-            health = requests.get(f"{base}/health", timeout=5)
-            health.raise_for_status()
+        return False
+
+    base = ENCODER_URL.rstrip("/")
+    try:
+        if not wait_for_ready(base):
+            print("[WARN] Encoder health did not become ready before deadline")
+            return False
 
         url = base + f"/encode_pipe?fps={int(fps)}"
-        # Stream PNG bytes directly (requests will send chunked transfer encoding)
-        resp = requests.post(
-            url,
-            data=_png_stream(anim),
-            headers={"Content-Type": "application/octet-stream"},
-            timeout=1200,
-        )
-        resp.raise_for_status()
+        headers = {
+            "Content-Type": "application/octet-stream",
+            "Expect": "100-continue",
+        }
+
+        def do_post():
+            return requests.post(
+                url,
+                data=_png_stream(anim),
+                headers=headers,
+                timeout=1200,
+            )
+
+        try:
+            resp = do_post()
+            resp.raise_for_status()
+        except (req_exc.ConnectionError, req_exc.Timeout, req_exc.HTTPError) as e:
+            status = getattr(getattr(e, "response", None), "status_code", None)
+            # One safe retry on cold-start/proxy errors
+            if status in (502, 503, 504) or isinstance(
+                e, (req_exc.ConnectionError, req_exc.Timeout)
+            ):
+                time.sleep(2)
+                if not wait_for_ready(base, deadline_sec=30):
+                    print("[WARN] Encoder not ready on retry window")
+                    return False
+                resp = do_post()
+                resp.raise_for_status()
+            else:
+                raise
+
         data = resp.json()
         video_b64 = data.get("video")
         if not video_b64:
