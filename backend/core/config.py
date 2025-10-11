@@ -23,3 +23,6 @@ CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
 # Session storage
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "/tmp/spotify_sessions")
 MAX_SESSIONS = int(os.getenv("MAX_SESSIONS", "5"))
+
+# Remote encoder service URL
+ENCODER_URL = os.getenv("ENCODER_URL")
