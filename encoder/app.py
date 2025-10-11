@@ -10,6 +10,9 @@ app = Flask(__name__)
 _level = os.getenv("LOG_LEVEL", "INFO").upper()
 app.logger.setLevel(getattr(logging, _level, logging.INFO))
 
+# flag that becomes True after NVENC check completes
+READY = False
+
 
 def get_ffmpeg_args(fps: int) -> list[str]:
     return [
@@ -46,7 +49,9 @@ def root():
 
 @app.get("/health")
 def health():
-    return jsonify({"status": "ok"}), 200
+    if READY:
+        return jsonify({"status": "ok"}), 200
+    return jsonify({"status": "starting"}), 503
 
 
 @app.post("/encode")
