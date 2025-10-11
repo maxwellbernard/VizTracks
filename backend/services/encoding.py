@@ -1,5 +1,6 @@
 import base64
 import io
+import time
 from typing import Iterator
 
 import matplotlib.pyplot as plt
@@ -60,7 +61,16 @@ def encode_animation_remote(anim, out_path: str, fps: int) -> bool:
     if not ENCODER_URL:
         return False
     try:
-        url = ENCODER_URL.rstrip("/") + f"/encode_pipe?fps={int(fps)}"
+        base = ENCODER_URL.rstrip("/")
+        try:
+            health = requests.get(f"{base}/health", timeout=5)
+            health.raise_for_status()
+        except Exception:
+            time.sleep(2)
+            health = requests.get(f"{base}/health", timeout=5)
+            health.raise_for_status()
+
+        url = base + f"/encode_pipe?fps={int(fps)}"
         # Stream PNG bytes directly (requests will send chunked transfer encoding)
         resp = requests.post(
             url,
