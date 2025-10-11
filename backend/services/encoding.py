@@ -1,5 +1,6 @@
 import base64
 import io
+from typing import Iterator
 
 import matplotlib.pyplot as plt
 import requests
@@ -38,34 +39,35 @@ def ffmpeg_args_fast(fps: int) -> list[str]:
     ]
 
 
-def encode_animation_remote(anim, out_path: str, fps: int) -> bool:
-    """Try remote encoding by streaming PNG frames to an encoder service.
+def _png_stream(anim) -> Iterator[bytes]:
+    """Yield PNG bytes for each frame in order without buffering all frames."""
+    total_frames = getattr(anim, "total_frames", None)
+    if total_frames is None:
+        return
+    fig = anim._fig
+    for i in range(total_frames):
+        anim._draw_next_frame(i, blit=False)
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", facecolor="#F0F0F0", dpi=fig.dpi)
+        yield buf.getvalue()
 
-    The encoder service accepts a JSON body with base64 PNG frames or a simple
-    chunked upload protocol. For simplicity here, we send a json list.
+
+def encode_animation_remote(anim, out_path: str, fps: int) -> bool:
+    """Try remote encoding by streaming PNG frames via chunked upload to /encode_pipe.
 
     Returns True if remote encoding succeeded; False otherwise.
     """
     if not ENCODER_URL:
         return False
     try:
-        total_frames = getattr(anim, "total_frames", None)
-        if total_frames is None:
-            return False
-        fig = anim._fig  # matplotlib internal but stable enough here
-        frames_png: list[str] = []
-        # Render each frame to PNG bytes; this is still CPU-heavy but moves video muxing to GPU
-        for i in range(total_frames):
-            anim._draw_next_frame(i, blit=False)  # advances internal state
-            buf = io.BytesIO()
-            fig.savefig(buf, format="png", facecolor="#F0F0F0", dpi=fig.dpi)
-            frames_png.append(base64.b64encode(buf.getvalue()).decode("utf-8"))
-        payload = {
-            "fps": fps,
-            "frames": frames_png,
-        }
-        url = ENCODER_URL.rstrip("/") + "/encode"
-        resp = requests.post(url, json=payload, timeout=600)
+        url = ENCODER_URL.rstrip("/") + f"/encode_pipe?fps={int(fps)}"
+        # Stream PNG bytes directly (requests will send chunked transfer encoding)
+        resp = requests.post(
+            url,
+            data=_png_stream(anim),
+            headers={"Content-Type": "application/octet-stream"},
+            timeout=1200,
+        )
         resp.raise_for_status()
         data = resp.json()
         video_b64 = data.get("video")
