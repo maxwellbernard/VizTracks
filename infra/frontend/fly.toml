@@ -1,0 +1,21 @@
+app = "spotify-animation-frontend"
+primary_region = "arn"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 8501
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ['app']
+
+  [http_service.http_options]
+    idle_timeout = 400
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 4
+  memory = "4gb"
