@@ -9,7 +9,7 @@ The web app is deployed on Streamlit Cloud and you can access it [here](https://
 
 # Example Visualizations
 
-<p align="center" style="display: flex; justify-content: center; gap: 30px;">
+<p align="center" style="display: flex; justify-content: center; gap: 50px;">
     <img src="./assets/visuals/album_name_Streams_visual_max.jpg" alt="Example Visualization 1" width="375">
     <img src="./assets/visuals/artist_name_Streams_animation.gif" alt="Example Animation" width="375">
 </p>
