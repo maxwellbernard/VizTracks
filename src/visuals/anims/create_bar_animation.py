@@ -964,4 +964,8 @@ def create_bar_animation(
     print(f"Total animation creation time: {t8 - t7:.2f} seconds")
     elapsed = time.time() - start_time
     print(f"create_bar_animation: end ({elapsed:.2f} seconds)")
+    try:
+        setattr(anim, "total_frames", int(total_frames))
+    except Exception:
+        pass
     return anim
