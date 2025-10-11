@@ -20,3 +20,5 @@ def setup_bar_plot_style(
     ax.xaxis.labelpad = 30
     ax.title.set_position([0.5, 1.3])
     ax.title.set_fontsize(20)
+    ax.set_facecolor("#F0F0F0")
+    ax.set_xticks([])
