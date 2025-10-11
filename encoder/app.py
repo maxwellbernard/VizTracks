@@ -1,10 +1,14 @@
 import base64
+import logging
 import os
+import time
 from typing import List
 
 from flask import Flask, jsonify, request
 
 app = Flask(__name__)
+_level = os.getenv("LOG_LEVEL", "INFO").upper()
+app.logger.setLevel(getattr(logging, _level, logging.INFO))
 
 
 def get_ffmpeg_args(fps: int) -> list[str]:
@@ -70,6 +74,7 @@ def encode():
             return jsonify(
                 {"error": "GPU (CUDA/NVENC) not available on this machine"}
             ), 500
+        app.logger.info(f"/encode requested: fps={fps}, frames={len(frames_b64)}")
         cmd = [
             "ffmpeg",
             "-y",
@@ -84,25 +89,50 @@ def encode():
             *get_ffmpeg_args(fps),
             out_path,
         ]
+        app.logger.info(f"Starting ffmpeg: {' '.join(cmd)}")
         proc = subprocess.Popen(
             cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
-        for b64 in frames_b64:
+        feed_start = time.perf_counter()
+        total_bytes = 0
+        for idx, b64 in enumerate(frames_b64, start=1):
             png_bytes = base64.b64decode(b64)
+            total_bytes += len(png_bytes)
             proc.stdin.write(png_bytes)
+            # Per-frame progress log
+            app.logger.info(
+                f"wrote frame {idx}/{len(frames_b64)} ({len(png_bytes)} bytes)"
+            )
         proc.stdin.close()
+        feed_end = time.perf_counter()
+        app.logger.info(
+            f"finished feeding {len(frames_b64)} frames to ffmpeg in {feed_end - feed_start:.3f}s; total_bytes={total_bytes}"
+        )
+        run_start = time.perf_counter()
         stdout, stderr = proc.communicate(timeout=1200)
+        run_end = time.perf_counter()
         if proc.returncode != 0:
+            try:
+                err_txt = stderr.decode("utf-8", errors="ignore")
+            except Exception:
+                err_txt = "<stderr decode failed>"
+            app.logger.error(
+                "ffmpeg failed: returncode=%s\nstderr:\n%s", proc.returncode, err_txt
+            )
             return jsonify(
                 {
                     "error": "ffmpeg failed",
-                    "detail": stderr.decode("utf-8", errors="ignore"),
+                    "detail": err_txt,
                 }
             ), 500
         with open(out_path, "rb") as f:
             video_b64 = base64.b64encode(f.read()).decode("utf-8")
+        app.logger.info(
+            f"ffmpeg succeeded in {run_end - run_start:.3f}s; total end-to-end: {(run_end - feed_start):.3f}s"
+        )
         return jsonify({"video": video_b64}), 200
     except Exception as e:
+        app.logger.exception("/encode error: %s", e)
         return jsonify({"error": str(e)}), 500
     finally:
         try:
