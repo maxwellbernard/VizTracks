@@ -9,8 +9,8 @@ The web app is deployed on Streamlit Cloud and you can access it [here](https://
 
 # Example Visualizations
 <p align="center">
-    <img src="./visuals/album_name_Streams_visual_max.jpg" alt="Example Visualization 1" width="375" style="display:inline-block; margin-right: 50px;">
-    <img src="./visuals/artist_name_Streams_animation.gif" alt="Example Animation" width="375" style="display:inline-block;">
+    <img src="./assets/visuals/album_name_Streams_visual_max.jpg" alt="Example Visualization 1" width="375" style="display:inline-block; margin-right: 50px;">
+    <img src="./assets/visuals/artist_name_Streams_animation.gif" alt="Example Animation" width="375" style="display:inline-block;">
 </p>
 
 
