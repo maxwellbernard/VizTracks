@@ -1,5 +1,7 @@
 import base64
 import io
+import os
+import tempfile
 import time
 from typing import Iterator
 
@@ -64,15 +66,18 @@ def encode_animation_remote(anim, out_path: str, fps: int) -> bool:
 
     def wait_for_ready(base: str, deadline_sec: int = 90) -> bool:
         start = time.monotonic()
-        attempt = 0
+        consecutive_ok = 0
         while time.monotonic() - start < deadline_sec:
-            attempt += 1
             try:
                 r = requests.get(f"{base}/health", timeout=5)
                 if r.ok:
-                    return True
+                    consecutive_ok += 1
+                    if consecutive_ok >= 2:
+                        return True
+                else:
+                    consecutive_ok = 0
             except Exception:
-                pass
+                consecutive_ok = 0
             time.sleep(2)
         return False
 
@@ -86,19 +91,32 @@ def encode_animation_remote(anim, out_path: str, fps: int) -> bool:
         url = base + f"/encode_pipe?fps={int(fps)}"
         headers = {
             "Content-Type": "application/octet-stream",
-            "Expect": "100-continue",
         }
 
-        def do_post():
-            return requests.post(
-                url,
-                data=_png_stream(anim),
-                headers=headers,
-                timeout=1200,
-            )
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp_path = tmp.name
+            fig = getattr(anim, "_fig", None)
+            total_frames = getattr(anim, "total_frames", None)
+            if fig is None or total_frames is None:
+                raise RuntimeError("Invalid animation object")
+            for i in range(total_frames):
+                anim._draw_next_frame(i, blit=False)
+                buf = io.BytesIO()
+                fig.savefig(buf, format="png", facecolor="#F0F0F0", dpi=fig.dpi)
+                tmp.write(buf.getvalue())
+            size = tmp.tell()
+
+        def do_post_file():
+            with open(tmp_path, "rb") as f:
+                return requests.post(
+                    url,
+                    data=f,
+                    headers=headers,
+                    timeout=1200,
+                )
 
         try:
-            resp = do_post()
+            resp = do_post_file()
             resp.raise_for_status()
         except (req_exc.ConnectionError, req_exc.Timeout, req_exc.HTTPError) as e:
             status = getattr(getattr(e, "response", None), "status_code", None)
@@ -111,7 +129,7 @@ def encode_animation_remote(anim, out_path: str, fps: int) -> bool:
                     print("[WARN] Encoder not ready on retry window")
                     return False
                 time.sleep(2)
-                resp = do_post()
+                resp = do_post_file()
                 resp.raise_for_status()
             else:
                 raise
@@ -126,6 +144,12 @@ def encode_animation_remote(anim, out_path: str, fps: int) -> bool:
     except Exception as e:
         print(f"[WARN] Remote encoder failed. Error: {e}")
         return False
+    finally:
+        try:
+            if "tmp_path" in locals() and os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except Exception:
+            pass
 
 
 def encode_animation(anim, out_path: str, fps: int) -> None:
