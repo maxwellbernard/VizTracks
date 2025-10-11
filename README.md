@@ -8,9 +8,10 @@ Top 5 Artists you've ever listened to? Top 10 Songs? Top 3 Albums you've listene
 The web app is deployed on Streamlit Cloud and you can access it [here](https://maxwell-bernard-spotify-animation-app.streamlit.app/).
 
 # Example Visualizations
-<p align="center">
-    <img src="./assets/visuals/album_name_Streams_visual_max.jpg" alt="Example Visualization 1" width="375" style="display:inline-block; margin-right: 50px;">
-    <img src="./assets/visuals/artist_name_Streams_animation.gif" alt="Example Animation" width="375" style="display:inline-block;">
+
+<p align="center" style="display: flex; justify-content: center; gap: 30px;">
+    <img src="./assets/visuals/album_name_Streams_visual_max.jpg" alt="Example Visualization 1" width="375">
+    <img src="./assets/visuals/artist_name_Streams_animation.gif" alt="Example Animation" width="375">
 </p>
 
 
