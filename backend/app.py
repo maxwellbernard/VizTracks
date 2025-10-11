@@ -12,7 +12,3 @@ CORS(app)
 app.register_blueprint(uploads_bp)
 app.register_blueprint(images_bp)
 app.register_blueprint(animations_bp)
-
-if __name__ == "__main__":
-    # Default local dev port
-    app.run(host="0.0.0.0", port=8080, debug=True)
