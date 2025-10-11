@@ -81,6 +81,7 @@ def encode_animation_remote(anim, out_path: str, fps: int) -> bool:
         if not wait_for_ready(base):
             print("[WARN] Encoder health did not become ready before deadline")
             return False
+        time.sleep(2)
 
         url = base + f"/encode_pipe?fps={int(fps)}"
         headers = {
@@ -109,6 +110,7 @@ def encode_animation_remote(anim, out_path: str, fps: int) -> bool:
                 if not wait_for_ready(base, deadline_sec=30):
                     print("[WARN] Encoder not ready on retry window")
                     return False
+                time.sleep(2)
                 resp = do_post()
                 resp.raise_for_status()
             else:
