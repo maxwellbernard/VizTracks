@@ -977,7 +977,7 @@ st.markdown(
     """
     This application is open-source and available under the GNU General Public License v3.
 
-    For more details, visit the [GitHub repository](https://github.com/maxwellbernard/spotify_animation_app). 
+    For more details, visit the [GitHub repository](https://github.com/maxwellbernard/viztrack-studio). 
     """,
     unsafe_allow_html=True,
 )
