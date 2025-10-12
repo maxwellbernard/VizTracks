@@ -519,6 +519,13 @@ def create_bar_animation(
         ax.set_ylim(
             bottom_pos - bottom_gap - bar_height / 2, top_pos + top_gap + bar_height / 2
         )
+
+    # Set a fixed global x-limit once to avoid per-frame invalidation
+    try:
+        global_max = max(max(d["widths"]) for d in precomputed_data.values()) or 1
+    except Exception:
+        global_max = 1
+    ax.set_xlim(0, global_max * 1.15)
     # how far to the left of the bar to place the image
     top_n_xybox_mapping = {
         1: (-127, 0),
@@ -975,10 +982,7 @@ def create_bar_animation(
         else:
             anim_state.prev_interp_positions = interp_positions[:]
 
-        _t0 = time.perf_counter()
-        ax.set_yticks([])
-        ax.set_xlim(0, max(display_widths) * 1.1)
-        t_axes += time.perf_counter() - _t0
+        # Axes are static; avoid per-frame changes to keep rendering cheaper
 
         # update year and month text
         year_text.set_text(f"{current_time.year}")
