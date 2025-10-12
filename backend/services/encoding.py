@@ -14,6 +14,7 @@ import requests
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 from PIL import Image
 from requests.adapters import HTTPAdapter, Retry
+from turbojpeg import TJPF_RGB, TurboJPEG
 
 from backend.core.config import ENCODER_URL
 
@@ -53,12 +54,17 @@ def _iter_frames_jpeg(anim, facecolor: str = "#F0F0F0") -> Iterator[bytes]:
     # Choose renderer
     renderer = os.getenv("RENDERER", "savefig").lower()
     canvas = None
+    turbo = None
     if renderer != "savefig":
         # Ensure Agg canvas and pre-create it for fast buffer access
         try:
             canvas = FigureCanvas(fig)
         except Exception:
             canvas = getattr(fig, "canvas", None)
+        try:
+            turbo = TurboJPEG()
+        except Exception:
+            turbo = None
     if hasattr(anim, "_init_draw"):
         anim._init_draw()
 
@@ -74,20 +80,38 @@ def _iter_frames_jpeg(anim, facecolor: str = "#F0F0F0") -> Iterator[bytes]:
                 dpi=fig.dpi,
                 pil_kwargs={
                     "quality": jpeg_quality,
+                    "optimize": False,
+                    "progressive": False,
                 },
             )
             return out.getvalue()
         else:
-            # Draw current frame to Agg buffer, then encode to JPEG via Pillow
+            # Draw current frame to Agg buffer, then encode to JPEG via TurboJPEG (fallback to Pillow)
             canvas.draw()
             w, h = canvas.get_width_height()
             buf = np.frombuffer(canvas.buffer_rgba(), dtype=np.uint8).reshape(h, w, 4)
-            img = Image.fromarray(buf[:, :, :3], mode="RGB")
-            out = io.BytesIO()
-            img.save(
-                out, format="JPEG", quality=jpeg_quality, subsampling=2, optimize=False
-            )
-            return out.getvalue()
+            rgb = buf[:, :, :3].copy(order="C")
+            if turbo is not None:
+                # 4:2:0 subsampling, fast DCT
+                jpeg_bytes = turbo.encode(
+                    rgb,
+                    pixel_format=TJPF_RGB,
+                    quality=jpeg_quality,
+                    jpeg_subsample=2,
+                    flags=0,
+                )
+                return jpeg_bytes
+            else:
+                img = Image.fromarray(rgb, mode="RGB")
+                out = io.BytesIO()
+                img.save(
+                    out,
+                    format="JPEG",
+                    quality=jpeg_quality,
+                    subsampling=2,
+                    optimize=False,
+                )
+                return out.getvalue()
 
     frame_idx = 0
     if hasattr(anim, "new_frame_seq"):
