@@ -177,7 +177,7 @@ def encode_animation_remote(anim, out_path: str, fps: int) -> bool:
 
 
 def encode_animation_via_job(
-    anim, out_path: str, fps: int, bucket: str = "renders"
+    anim, out_path: str, fps: int, bucket: str = "viztracks"
 ) -> bool:
     """Alternative: upload PNG bundle to Supabase, trigger /encode_job, download MP4.
 
@@ -216,7 +216,7 @@ def encode_animation_via_job(
         input_url = sb.storage.from_(bucket).get_public_url(key)
 
         # 3) Trigger encoder job
-        out_key = f"renders/{int(time.time() * 1000)}.mp4"
+        out_key = f"viztracks/{int(time.time() * 1000)}.mp4"
         job = {
             "input_url": input_url,
             "fps": int(fps),
