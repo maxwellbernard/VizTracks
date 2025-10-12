@@ -476,7 +476,24 @@ def _encode_raw(anim, out_path: str, fps: int) -> None:
 
     base = ENCODER_URL.rstrip("/")
 
-    # Prime the first frame to get dimensions
+    def _wait_for_encoder_ready(url_base: str, timeout_s: float = 90.0) -> None:
+        deadline = time.monotonic() + timeout_s
+        last_err = None
+        while time.monotonic() < deadline:
+            try:
+                r = requests.get(f"{url_base}/health", timeout=3)
+                if r.status_code == 200 and (r.json().get("status") == "ok"):
+                    return
+            except Exception as e:
+                last_err = e
+            time.sleep(0.5)
+        if last_err:
+            logger.warning("client: encoder health wait gave up: %s", last_err)
+        else:
+            logger.warning("client: encoder health wait timed out")
+
+    # Prime the first frame to get dimensions, after waiting for readiness
+    _wait_for_encoder_ready(base)
     frame_iter = _iter_frames_rgb(anim, facecolor="#F0F0F0")
     try:
         first = next(frame_iter)
@@ -507,6 +524,8 @@ def _encode_raw(anim, out_path: str, fps: int) -> None:
         "X-Height": str(h),
         "X-Fps": str(fps),
         "X-PixFmt": "rgb24",
+        "Expect": "100-continue",
+        "Connection": "close",
     }
 
     url = f"{base}/encode_raw"
