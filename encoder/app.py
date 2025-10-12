@@ -37,6 +37,7 @@ def _detect_scalers() -> dict:
 
 
 DETECTED_SCALERS = _detect_scalers()
+app.logger.info("scalers detected: %s", DETECTED_SCALERS)
 
 
 def _select_scaler(env_pref: Optional[str]) -> str:
@@ -492,6 +493,11 @@ def encode_raw():
     )
     if use_scale:
         scaler_choice = _select_scaler(os.getenv("FFMPEG_SCALER"))
+        app.logger.info(
+            "encode_raw: scaler requested (env=%s) -> %s",
+            os.getenv("FFMPEG_SCALER"),
+            scaler_choice,
+        )
         if scaler_choice == "npp":
             vf = f"format=rgb24,hwupload_cuda,scale_npp={tgt_w}:{tgt_h}:interp_algo=lanczos:format=nv12"
             cmd += ["-vf", vf]
@@ -501,7 +507,25 @@ def encode_raw():
         else:
             cmd += ["-vf", f"scale={tgt_w}:{tgt_h}:flags=lanczos"]
 
-    cmd += [*get_ffmpeg_args(fps), str(out_mp4)]
+    enc_args = get_ffmpeg_args(fps)
+    # If using GPU scaler, avoid forcing SW pix_fmt yuv420p which inserts auto_scale
+    if use_scale:
+        scaler_choice = _select_scaler(os.getenv("FFMPEG_SCALER"))
+        if scaler_choice in ("npp", "cuda"):
+            try:
+                i = 0
+                while i < len(enc_args):
+                    if (
+                        enc_args[i] == "-pix_fmt"
+                        and i + 1 < len(enc_args)
+                        and enc_args[i + 1] == "yuv420p"
+                    ):
+                        del enc_args[i : i + 2]
+                        break
+                    i += 1
+            except Exception:
+                pass
+    cmd += [*enc_args, str(out_mp4)]
 
     app.logger.info("encode_raw: starting ffmpeg %s", " ".join(cmd))
 

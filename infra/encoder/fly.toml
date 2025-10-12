@@ -34,3 +34,5 @@ primary_region = "ord"
 
 [env]
   RENDERER = "agg"
+  # Prefer CUDA scaler on Fly (scale_cuda present; NPP not available in this image)
+  FFMPEG_SCALER = "cuda"
