@@ -19,3 +19,9 @@ primary_region = 'arn'
   memory = '16gb'
   cpu_kind = 'performance'
   cpus = 4
+  
+[env]
+  APPEND_BATCH_SIZE = "45"
+  UPLOAD_FLUSH_SECS = "1.2"
+  MIN_UPLOAD_BATCH = "12"
+  JPEG_QUALITY = "75"

@@ -86,7 +86,7 @@ def _iter_frames_jpeg(anim, facecolor: str = "#F0F0F0") -> Iterator[bytes]:
             )
             return out.getvalue()
         else:
-            # Draw current frame to Agg buffer, then encode to JPEG via TurboJPEG (fallback to Pillow)
+            # Draw current frame to Agg buffer, then encode to JPEG via TurboJPEG
             canvas.draw()
             w, h = canvas.get_width_height()
             buf = np.frombuffer(canvas.buffer_rgba(), dtype=np.uint8).reshape(h, w, 4)
@@ -102,6 +102,9 @@ def _iter_frames_jpeg(anim, facecolor: str = "#F0F0F0") -> Iterator[bytes]:
                 )
                 return jpeg_bytes
             else:
+                logger.warning(
+                    "TurboJPEG not available, falling back to Pillow for JPEG encoding"
+                )
                 img = Image.fromarray(rgb, mode="RGB")
                 out = io.BytesIO()
                 img.save(
