@@ -15,6 +15,7 @@ ENV = os.getenv("ENV", "local")
 # Supabase credentials
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
 # Spotify API credentials
 CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
