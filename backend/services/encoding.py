@@ -142,7 +142,11 @@ def _iter_frames_rgb(anim, facecolor: str = "#F0F0F0") -> Iterator[np.ndarray]:
     frame_idx = 0
 
     def grab_rgb() -> np.ndarray:
+        t0 = time.perf_counter()
         canvas.draw()
+        t_draw = time.perf_counter() - t0
+        if frame_idx % 100 == 0:
+            logger.info("perf: draw %.4f s (frame=%d)", t_draw, frame_idx)
         w, h = canvas.get_width_height()
         buf = np.frombuffer(canvas.buffer_rgba(), dtype=np.uint8).reshape(h, w, 4)
         return buf[:, :, :3].copy(order="C")
@@ -225,28 +229,34 @@ def _encode_remote(anim, out_path: str, fps: int) -> bool:
                 def encoder_worker() -> None:
                     try:
                         try:
-                            from turbojpeg import TJPF_RGB, TurboJPEG
+                            from turbojpeg import TJFLAG_FASTDCT, TJPF_RGB, TurboJPEG
 
                             turbo = TurboJPEG()
                         except Exception:
                             turbo = None
+
                         q = raw_q
                         while True:
-                            arr = q.get()
-                            if arr is None:
+                            item = q.get()
+                            if item is None:
                                 jpg_q.put(None)
                                 q.task_done()
                                 break
+
+                            idx, arr = item  # <— unpack frame index
                             try:
                                 if turbo is not None:
-                                    jpg_bytes = turbo.encode(
+                                    t0 = time.perf_counter()
+                                    jpeg_bytes = turbo.encode(
                                         arr,
                                         pixel_format=TJPF_RGB,
                                         quality=int(os.getenv("JPEG_QUALITY", "75")),
                                         jpeg_subsample=2,
                                         flags=TJFLAG_FASTDCT,
                                     )
+                                    t_jpeg = time.perf_counter() - t0
                                 else:
+                                    t0 = time.perf_counter()
                                     img = Image.fromarray(arr, mode="RGB")
                                     out = io.BytesIO()
                                     img.save(
@@ -256,8 +266,16 @@ def _encode_remote(anim, out_path: str, fps: int) -> bool:
                                         subsampling=2,
                                         optimize=False,
                                     )
-                                    jpg_bytes = out.getvalue()
-                                jpg_q.put(base64.b64encode(jpg_bytes).decode("utf-8"))
+                                    jpeg_bytes = out.getvalue()
+                                    t_jpeg = time.perf_counter() - t0
+
+                                # your requested log style
+                                if (idx % 100) == 0:
+                                    logger.info(
+                                        "client: jpeg %.3f s (frame=%d)", t_jpeg, idx
+                                    )
+
+                                jpg_q.put(base64.b64encode(jpeg_bytes).decode("utf-8"))
                             finally:
                                 q.task_done()
                     except Exception as ex:
