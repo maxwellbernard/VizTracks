@@ -10,6 +10,7 @@ from flask import Flask, jsonify, request
 app = Flask(__name__)
 _level = os.getenv("LOG_LEVEL", "INFO").upper()
 app.logger.setLevel(getattr(logging, _level, logging.INFO))
+app.logger.info("encoder starting with LOG_LEVEL=%s", _level)
 
 READY: bool | None = None
 
