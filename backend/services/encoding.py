@@ -24,16 +24,6 @@ logger = logging.getLogger(__name__)
 def _iter_frames_jpeg(anim, facecolor: str = "#F0F0F0") -> Iterator[bytes]:
     """Yield JPEG bytes frame-by-frame without materializing the whole animation."""
     fig = anim._fig
-    # Speed-focused rendering settings
-    try:
-        dpi = int(os.getenv("OUTPUT_DPI", "72"))
-    except Exception:
-        dpi = 72
-    try:
-        out_w = int(os.getenv("OUTPUT_WIDTH", "0"))
-        out_h = int(os.getenv("OUTPUT_HEIGHT", "0"))
-    except Exception:
-        out_w = out_h = 0
 
     try:
         mpl.rcParams["text.antialiased"] = False
@@ -45,13 +35,10 @@ def _iter_frames_jpeg(anim, facecolor: str = "#F0F0F0") -> Iterator[bytes]:
 
     try:
         fig.set_tight_layout(False)
-        fig.set_dpi(dpi)
-        if out_w > 0 and out_h > 0:
-            fig.set_size_inches(out_w / dpi, out_h / dpi, forward=True)
     except Exception:
         pass
 
-    renderer = os.getenv("RENDERER").lower()
+    renderer = (os.getenv("RENDERER") or "savefig").lower()
     canvas = None
     turbo = None
     if renderer != "savefig":
@@ -73,7 +60,7 @@ def _iter_frames_jpeg(anim, facecolor: str = "#F0F0F0") -> Iterator[bytes]:
             fig.savefig(
                 out,
                 format="jpg",
-                facecolor=facecolor,
+                facecolor=fig.get_facecolor(),
                 dpi=fig.dpi,
                 pil_kwargs={
                     "quality": jpeg_quality,
@@ -137,15 +124,6 @@ def _iter_frames_rgb(anim, facecolor: str = "#F0F0F0") -> Iterator[np.ndarray]:
     """Yield contiguous RGB numpy arrays using Agg renderer."""
     fig = anim._fig
     try:
-        dpi = int(os.getenv("OUTPUT_DPI", "72"))
-    except Exception:
-        dpi = 72
-    try:
-        out_w = int(os.getenv("OUTPUT_WIDTH", "0"))
-        out_h = int(os.getenv("OUTPUT_HEIGHT", "0"))
-    except Exception:
-        out_w = out_h = 0
-    try:
         mpl.rcParams["text.antialiased"] = False
         mpl.rcParams["patch.antialiased"] = False
         mpl.rcParams["lines.antialiased"] = False
@@ -154,9 +132,6 @@ def _iter_frames_rgb(anim, facecolor: str = "#F0F0F0") -> Iterator[np.ndarray]:
         pass
     try:
         fig.set_tight_layout(False)
-        fig.set_dpi(dpi)
-        if out_w > 0 and out_h > 0:
-            fig.set_size_inches(out_w / dpi, out_h / dpi, forward=True)
     except Exception:
         pass
     canvas = FigureCanvas(fig)
