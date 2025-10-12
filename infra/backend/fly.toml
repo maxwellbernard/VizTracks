@@ -33,4 +33,4 @@ primary_region = 'arn'
   RENDERER = "agg"
   RENDER_MAX_WIDTH = "1280"
   RENDER_MAX_HEIGHT = "720"
-  FFMPEG_SCALER = "npp"
+  FFMPEG_SCALER = "cuda"
