@@ -185,6 +185,8 @@ def encode_pipe():
 
     with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_out:
         out_path = tmp_out.name
+    with tempfile.NamedTemporaryFile(suffix=".pipe", delete=False) as tmp_in:
+        in_path = tmp_in.name
 
     try:
         # Sanity check for NVENC
@@ -194,6 +196,40 @@ def encode_pipe():
         if accels.returncode != 0 or "cuda" not in accels.stdout.lower():
             return jsonify({"error": "GPU (CUDA/NVENC) not available"}), 500
 
+        # First, buffer the entire request body to a temp file to avoid mid-upload socket issues
+        total_bytes = 0
+        t0 = time.perf_counter()
+        # Use larger chunks to reduce syscall overhead (default 1 MiB; override via CHUNK_SIZE_BYTES, cap at 4 MiB)
+        try:
+            env_chunk = int(os.getenv("CHUNK_SIZE_BYTES", str(1024 * 1024)))
+        except Exception:
+            env_chunk = 1024 * 1024
+        chunk_size = max(1024 * 1024, min(env_chunk, 4 * 1024 * 1024))
+        app.logger.info(f"/encode_pipe using chunk_size={chunk_size} bytes")
+        PNG_SIG = b"\x89PNG\r\n\x1a\n"
+        sig_len = len(PNG_SIG)
+        carry = b""
+        frame_count = 0
+        with open(in_path, "wb") as w:
+            while True:
+                chunk = request.stream.read(chunk_size)
+                if not chunk:
+                    break
+                scan_buf = carry + chunk
+                idx = 0
+                while True:
+                    hit = scan_buf.find(PNG_SIG, idx)
+                    if hit == -1:
+                        break
+                    frame_count += 1
+                    app.logger.info(
+                        f"pipe: wrote frame {frame_count} (chunk={len(chunk)} bytes, total={total_bytes})"
+                    )
+                    idx = hit + sig_len
+                total_bytes += len(chunk)
+                w.write(chunk)
+
+        # Now run ffmpeg and feed the buffered bytes through stdin
         cmd = [
             "ffmpeg",
             "-y",
@@ -212,62 +248,25 @@ def encode_pipe():
         proc = subprocess.Popen(
             cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
-
-        # Read request body in chunks and forward to ffmpeg stdin
-        total_bytes = 0
-        t0 = time.perf_counter()
-        chunk_size = 65536
-        # Per-frame progress
-        PNG_SIG = b"\x89PNG\r\n\x1a\n"
-        sig_len = len(PNG_SIG)
-        carry = b""
-        frame_count = 0
-        while True:
-            chunk = request.stream.read(chunk_size)
-            if not chunk:
-                break
-            # If ffmpeg has already exited, capture stderr and abort early
-            if proc.poll() is not None:
-                try:
-                    err_txt = proc.stderr.read().decode("utf-8", errors="ignore")
-                except Exception:
-                    err_txt = "<stderr read failed>"
-                app.logger.error(
-                    "ffmpeg exited early (rc=%s) before input complete; stderr=\n%s",
-                    proc.returncode,
-                    err_txt,
-                )
-                return jsonify({"error": "ffmpeg exited early", "detail": err_txt}), 500
-            scan_buf = carry + chunk
-            idx = 0
+        with open(in_path, "rb") as r:
             while True:
-                hit = scan_buf.find(PNG_SIG, idx)
-                if hit == -1:
+                chunk = r.read(chunk_size)
+                if not chunk:
                     break
-                frame_count += 1
-                app.logger.info(
-                    f"pipe: wrote frame {frame_count} (chunk={len(chunk)} bytes, total={total_bytes})"
-                )
-                idx = hit + sig_len
-
-            total_bytes += len(chunk)
-            try:
-                proc.stdin.write(chunk)
-            except BrokenPipeError:
-                # ffmpeg likely errored; read stderr for details
                 try:
-                    err_txt = proc.stderr.read().decode("utf-8", errors="ignore")
-                except Exception:
-                    err_txt = "<stderr read failed>"
-                app.logger.error(
-                    "write to ffmpeg stdin failed: Broken pipe; stderr=\n%s", err_txt
-                )
-                return jsonify({"error": "ffmpeg broken pipe", "detail": err_txt}), 500
-            carry = (
-                scan_buf[-(sig_len - 1) :]
-                if len(scan_buf) >= (sig_len - 1)
-                else scan_buf
-            )
+                    proc.stdin.write(chunk)
+                except BrokenPipeError:
+                    try:
+                        err_txt = proc.stderr.read().decode("utf-8", errors="ignore")
+                    except Exception:
+                        err_txt = "<stderr read failed>"
+                    app.logger.error(
+                        "write to ffmpeg stdin failed: Broken pipe; stderr=\n%s",
+                        err_txt,
+                    )
+                    return jsonify(
+                        {"error": "ffmpeg broken pipe", "detail": err_txt}
+                    ), 500
         try:
             proc.stdin.close()
         except Exception:
@@ -298,6 +297,10 @@ def encode_pipe():
     finally:
         try:
             os.remove(out_path)
+        except Exception:
+            pass
+        try:
+            os.remove(in_path)
         except Exception:
             pass
 
