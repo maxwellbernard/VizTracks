@@ -20,6 +20,49 @@ app.config["USE_X_SENDFILE"] = False
 
 READY: Optional[bool] = None
 
+
+# Determine available scalers once
+def _detect_scalers() -> dict:
+    caps = {"scale_npp": False, "scale_cuda": False}
+    try:
+        out = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-filters"], capture_output=True, text=True
+        )
+        txt = out.stdout.lower()
+        caps["scale_npp"] = "scale_npp" in txt
+        caps["scale_cuda"] = "scale_cuda" in txt
+    except Exception:
+        pass
+    return caps
+
+
+DETECTED_SCALERS = _detect_scalers()
+
+
+def _select_scaler(env_pref: Optional[str]) -> str:
+    pref = (env_pref or "auto").lower()
+    if pref == "npp":
+        return (
+            "npp"
+            if DETECTED_SCALERS.get("scale_npp")
+            else ("cuda" if DETECTED_SCALERS.get("scale_cuda") else "cpu")
+        )
+    if pref == "cuda":
+        return (
+            "cuda"
+            if DETECTED_SCALERS.get("scale_cuda")
+            else ("npp" if DETECTED_SCALERS.get("scale_npp") else "cpu")
+        )
+    if pref == "cpu":
+        return "cpu"
+    # auto
+    if DETECTED_SCALERS.get("scale_npp"):
+        return "npp"
+    if DETECTED_SCALERS.get("scale_cuda"):
+        return "cuda"
+    return "cpu"
+
+
 # Session state: session_id -> {"dir": Path, "fps": int, "count": int, "created": float}
 SESSIONS: Dict[str, Dict] = {}
 
@@ -448,17 +491,14 @@ def encode_raw():
         and (tgt_w != w or tgt_h != h)
     )
     if use_scale:
-        scaler = os.getenv("FFMPEG_SCALER", "auto").lower()
-        if scaler in ("npp", "auto"):
-            # Convert SW rgb24 -> HW frames, scale on GPU (NPP), keep NV12 for NVENC
+        scaler_choice = _select_scaler(os.getenv("FFMPEG_SCALER"))
+        if scaler_choice == "npp":
             vf = f"format=rgb24,hwupload_cuda,scale_npp={tgt_w}:{tgt_h}:interp_algo=lanczos:format=nv12"
             cmd += ["-vf", vf]
-        elif scaler == "cuda":
-            # CUDA scaler path
+        elif scaler_choice == "cuda":
             vf = f"format=rgb24,hwupload_cuda,scale_cuda={tgt_w}:{tgt_h}:format=nv12"
             cmd += ["-vf", vf]
         else:
-            # CPU scaler
             cmd += ["-vf", f"scale={tgt_w}:{tgt_h}:flags=lanczos"]
 
     cmd += [*get_ffmpeg_args(fps), str(out_mp4)]
