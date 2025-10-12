@@ -50,26 +50,44 @@ def _iter_frames_jpeg(anim, facecolor: str = "#F0F0F0") -> Iterator[bytes]:
     except Exception:
         pass
 
-    # Ensure Agg canvas and pre-create it
-    try:
-        canvas = FigureCanvas(fig)
-    except Exception:
-        canvas = fig.canvas  # fallback
+    # Choose renderer
+    renderer = os.getenv("RENDERER", "savefig").lower()
+    canvas = None
+    if renderer != "savefig":
+        # Ensure Agg canvas and pre-create it for fast buffer access
+        try:
+            canvas = FigureCanvas(fig)
+        except Exception:
+            canvas = getattr(fig, "canvas", None)
     if hasattr(anim, "_init_draw"):
         anim._init_draw()
 
     def _save() -> bytes:
-        # Draw current frame to Agg buffer, then encode to JPEG via Pillow
-        canvas.draw()
-        w, h = canvas.get_width_height()
-        buf = np.frombuffer(canvas.buffer_rgba(), dtype=np.uint8).reshape(h, w, 4)
-        img = Image.fromarray(buf[:, :, :3], mode="RGB")
-        out = io.BytesIO()
-        jpeg_quality = int(os.getenv("JPEG_QUALITY", "80"))
-        img.save(
-            out, format="JPEG", quality=jpeg_quality, subsampling=2, optimize=False
-        )
-        return out.getvalue()
+        jpeg_quality = int(os.getenv("JPEG_QUALITY", "75"))
+        if renderer == "savefig" or canvas is None:
+            # Use savefig (fast in your env) with lean JPEG options
+            out = io.BytesIO()
+            fig.savefig(
+                out,
+                format="jpg",
+                facecolor=facecolor,
+                dpi=fig.dpi,
+                pil_kwargs={
+                    "quality": jpeg_quality,
+                },
+            )
+            return out.getvalue()
+        else:
+            # Draw current frame to Agg buffer, then encode to JPEG via Pillow
+            canvas.draw()
+            w, h = canvas.get_width_height()
+            buf = np.frombuffer(canvas.buffer_rgba(), dtype=np.uint8).reshape(h, w, 4)
+            img = Image.fromarray(buf[:, :, :3], mode="RGB")
+            out = io.BytesIO()
+            img.save(
+                out, format="JPEG", quality=jpeg_quality, subsampling=2, optimize=False
+            )
+            return out.getvalue()
 
     frame_idx = 0
     if hasattr(anim, "new_frame_seq"):
@@ -133,8 +151,8 @@ def _encode_remote(anim, out_path: str, fps: int) -> bool:
                 return False
             logger.info("client: started session id=%s fps=%s", session_id, fps)
             # Overlap rendering and uploads using a queue + uploader thread
-            batch_size = int(os.getenv("APPEND_BATCH_SIZE", "180"))
-            batch_size = int(os.getenv("APPEND_BATCH_SIZE", "240"))
+            batch_size = int(os.getenv("APPEND_BATCH_SIZE", "120"))
+            flush_secs = float(os.getenv("UPLOAD_FLUSH_SECS", "0.75"))
             frame_queue: "queue.Queue[Optional[bytes]]" = queue.Queue(
                 maxsize=batch_size * 3
             )
@@ -146,6 +164,7 @@ def _encode_remote(anim, out_path: str, fps: int) -> bool:
                     sent_local = 0
                     with _session() as up_sess:
                         batch_local: list[str] = []
+                        last_flush = time.time()
                         while True:
                             item = frame_queue.get()
                             if item is None:
@@ -167,10 +186,15 @@ def _encode_remote(anim, out_path: str, fps: int) -> bool:
                                         sent_local,
                                         session_id,
                                     )
+                                frame_queue.task_done()
                                 break
                             # normal frame
                             batch_local.append(base64.b64encode(item).decode("utf-8"))
-                            if len(batch_local) >= batch_size:
+                            now = time.time()
+                            if (
+                                len(batch_local) >= batch_size
+                                or (now - last_flush) >= flush_secs
+                            ):
                                 rr = up_sess.post(
                                     f"{base}/append",
                                     json={
@@ -188,6 +212,7 @@ def _encode_remote(anim, out_path: str, fps: int) -> bool:
                                     session_id,
                                 )
                                 batch_local.clear()
+                                last_flush = now
                             frame_queue.task_done()
                 except Exception as ex:
                     send_err.append(ex)
