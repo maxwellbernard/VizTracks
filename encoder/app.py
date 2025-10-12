@@ -592,6 +592,31 @@ def encode_raw():
     app.logger.info(
         "encode_raw: ok bytes_in=%s out_bytes=%s", bytes_in, out_mp4.stat().st_size
     )
+    # Probe encoded dimensions for client logging
+    enc_w = enc_h = None
+    try:
+        probe = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height",
+                "-of",
+                "csv=p=0",
+                str(out_mp4),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if probe.returncode == 0 and probe.stdout:
+            parts = probe.stdout.strip().split(",")
+            if len(parts) >= 2:
+                enc_w, enc_h = parts[0], parts[1]
+    except Exception:
+        pass
 
     def _iter_out():
         with open(out_mp4, "rb") as f:
@@ -604,6 +629,9 @@ def encode_raw():
     resp = Response(_iter_out(), mimetype="video/mp4")
     try:
         resp.headers["Content-Length"] = str(out_mp4.stat().st_size)
+        if enc_w and enc_h:
+            resp.headers["X-Encoded-Width"] = str(enc_w)
+            resp.headers["X-Encoded-Height"] = str(enc_h)
     except Exception:
         pass
     resp.headers["Connection"] = "close"

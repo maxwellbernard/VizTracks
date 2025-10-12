@@ -504,6 +504,8 @@ def _encode_raw(anim, out_path: str, fps: int) -> None:
         raise RuntimeError("Frame must be HxWx3 uint8 array")
 
     h, w, _ = first.shape
+    # Log draw size (Agg canvas size in pixels)
+    logger.info("client: draw size %dx%d (figsize*dpi)", w, h)
 
     def body() -> TypingIterator[bytes]:
         # yield first then the rest
@@ -559,6 +561,14 @@ def _encode_raw(anim, out_path: str, fps: int) -> None:
         url, data=body(), headers=headers, stream=True, timeout=1800
     ) as r:
         r.raise_for_status()
+        # Log encoded size if encoder provides it via headers
+        try:
+            enc_w = r.headers.get("X-Encoded-Width")
+            enc_h = r.headers.get("X-Encoded-Height")
+            if enc_w and enc_h:
+                logger.info("client: encoded size %sx%s (from encoder)", enc_w, enc_h)
+        except Exception:
+            pass
         total = 0
         with open(out_path, "wb") as f:
             for chunk in r.iter_content(chunk_size=1024 * 1024):
