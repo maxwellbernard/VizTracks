@@ -350,6 +350,12 @@ def finalize():
             # Mark finalized and return the file as binary (streamed); keep session for idempotency
             meta["finalized"] = True
 
+            app.logger.info(
+                "finalize: streaming mp4 session=%s bytes=%s",
+                sid,
+                out_mp4.stat().st_size,
+            )
+
             def _iter_final():
                 with open(out_mp4, "rb") as f:
                     while True:

@@ -19,4 +19,4 @@ EXPOSE 8080
 
 
 ENTRYPOINT []
-CMD ["gunicorn", "-w", "1", "--threads", "2", "--timeout", "1200", "--graceful-timeout", "1200", "-b", "0.0.0.0:8080", "encoder.app:app"]
+CMD ["gunicorn", "-w", "1", "-k", "sync", "--threads", "1", "--timeout", "1200", "--graceful-timeout", "1200", "--keep-alive", "5", "--no-sendfile", "-b", "0.0.0.0:8080", "encoder.app:app"]
