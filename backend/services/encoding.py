@@ -1,5 +1,6 @@
 import base64
 import io
+import logging
 import os
 import tempfile
 import time
@@ -11,6 +12,8 @@ from requests import exceptions as req_exc
 from supabase import create_client
 
 from backend.core.config import ENCODER_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_URL
+
+logger = logging.getLogger(__name__)
 
 
 def ffmpeg_args_fast(fps: int) -> list[str]:
@@ -184,6 +187,7 @@ def encode_animation_via_job(
     Returns True on success.
     """
     if not ENCODER_URL or not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        logger.warning("job: missing ENCODER_URL or Supabase credentials; aborting")
         return False
     sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
     base = ENCODER_URL.rstrip("/")
@@ -191,29 +195,51 @@ def encode_animation_via_job(
     # 1) Build PNG bundle into temp file
     tmp_png_path = None
     try:
+        total_frames = getattr(anim, "total_frames", None)
+        logger.info(
+            "job: start fps=%s bucket=%s total_frames=%s", fps, bucket, total_frames
+        )
         with tempfile.NamedTemporaryFile(delete=False) as tmp:
             tmp_png_path = tmp.name
             fig = getattr(anim, "_fig", None)
             total_frames = getattr(anim, "total_frames", None)
             if fig is None or total_frames is None:
                 raise RuntimeError("Invalid animation object")
+            count = 0
             for i in range(total_frames):
                 anim._draw_next_frame(i, blit=False)
                 buf = io.BytesIO()
                 fig.savefig(buf, format="png", facecolor="#F0F0F0", dpi=fig.dpi)
-                tmp.write(buf.getvalue())
+                b = buf.getvalue()
+                tmp.write(b)
+                count += 1
+
+        size_bytes = os.path.getsize(tmp_png_path) if tmp_png_path else 0
+        logger.info(
+            "job: built PNG bundle frames=%s size=%sB path=%s",
+            count,
+            size_bytes,
+            tmp_png_path,
+        )
 
         # 2) Upload to Supabase Storage
         key = f"jobs/{int(time.time() * 1000)}.pngpipe"
         with open(tmp_png_path, "rb") as f:
             data = f.read()
+        logger.info(
+            "job: uploading bundle to supabase bucket=%s key=%s size=%sB",
+            bucket,
+            key,
+            len(data),
+        )
         res = sb.storage.from_(bucket).upload(
             key, data, {"content-type": "application/octet-stream", "upsert": True}
         )
         if getattr(res, "error", None):
-            print(f"[WARN] Supabase upload error: {res.error}")
+            logger.warning("job: supabase upload error: %s", res.error)
             return False
         input_url = sb.storage.from_(bucket).get_public_url(key)
+        logger.info("job: uploaded bundle url=%s", input_url)
 
         # 3) Trigger encoder job
         out_key = f"viztracks/{int(time.time() * 1000)}.mp4"
@@ -223,27 +249,34 @@ def encode_animation_via_job(
             "output_bucket": bucket,
             "output_path": out_key,
         }
-        r = requests.post(base + "/encode_job", json=job, timeout=(10, 1200))
+        job_url = base + "/encode_job"
+        logger.info("job: posting encode job url=%s output=%s", job_url, out_key)
+        r = requests.post(job_url, json=job, timeout=(10, 1200))
         r.raise_for_status()
         url = r.json().get("url")
         if not url:
-            print("[WARN] No URL returned from encode job")
+            logger.warning("job: no URL returned from encode job")
             return False
+        logger.info("job: encode completed url=%s", url)
 
         # 4) Download result
+        logger.info("job: downloading result to %s", out_path)
         vr = requests.get(url, timeout=120, stream=True)
         vr.raise_for_status()
         with open(out_path, "wb") as f:
+            total_written = 0
             for chunk in vr.iter_content(chunk_size=1024 * 1024):
                 if chunk:
                     f.write(chunk)
+                    total_written += len(chunk)
+        logger.info("job: download complete size=%sB -> %s", total_written, out_path)
         try:
             plt.close(anim._fig)
         except Exception:
             pass
         return True
     except Exception as e:
-        print(f"[WARN] encode_animation_via_job failed: {e}")
+        logger.exception("job: encode_animation_via_job failed: %s", e)
         return False
     finally:
         try:
