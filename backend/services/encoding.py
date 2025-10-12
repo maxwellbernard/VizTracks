@@ -110,7 +110,7 @@ def _iter_frames_jpeg(anim, facecolor: str = "#F0F0F0") -> Iterator[bytes]:
     else:
         while True:
             try:
-                anim._draw_next_frame(frame_idx, blit=False)
+                anim._draw_next_frame(frame_idx, blit=True)
             except StopIteration:
                 break
             b = _save()
@@ -157,7 +157,7 @@ def _iter_frames_rgb(anim, facecolor: str = "#F0F0F0") -> Iterator[np.ndarray]:
     else:
         while True:
             try:
-                anim._draw_next_frame(frame_idx, blit=False)
+                anim._draw_next_frame(frame_idx, blit=True)
             except StopIteration:
                 break
             rgb = grab_rgb()
