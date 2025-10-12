@@ -449,13 +449,16 @@ def encode_raw():
     )
     if use_scale:
         scaler = os.getenv("FFMPEG_SCALER", "auto").lower()
-        if scaler == "npp":
-            cmd += ["-vf", f"scale_npp={tgt_w}:{tgt_h}:interp_algo=lanczos"]
+        if scaler in ("npp", "auto"):
+            # Convert SW rgb24 -> HW frames, scale on GPU (NPP), keep NV12 for NVENC
+            vf = f"format=rgb24,hwupload_cuda,scale_npp={tgt_w}:{tgt_h}:interp_algo=lanczos:format=nv12"
+            cmd += ["-vf", vf]
         elif scaler == "cuda":
-            cmd += ["-vf", f"scale_cuda={tgt_w}:{tgt_h}"]
-        elif scaler == "auto":
-            cmd += ["-vf", f"scale_npp={tgt_w}:{tgt_h}:interp_algo=lanczos"]
+            # CUDA scaler path
+            vf = f"format=rgb24,hwupload_cuda,scale_cuda={tgt_w}:{tgt_h}:format=nv12"
+            cmd += ["-vf", vf]
         else:
+            # CPU scaler
             cmd += ["-vf", f"scale={tgt_w}:{tgt_h}:flags=lanczos"]
 
     cmd += [*get_ffmpeg_args(fps), str(out_mp4)]
