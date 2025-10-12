@@ -30,3 +30,4 @@ primary_region = 'arn'
   OUTPUT_DPI = "72"
   UPLOAD_QUEUE_MAX = "90"
   JPEG_SUBSAMPLE = "1"
+  RENDERER = "agg"
