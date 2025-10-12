@@ -8,8 +8,9 @@ from typing import Iterator
 import matplotlib.pyplot as plt
 import requests
 from requests import exceptions as req_exc
+from supabase import create_client
 
-from backend.core.config import ENCODER_URL
+from backend.core.config import ENCODER_URL, SUPABASE_KEY, SUPABASE_URL
 
 
 def ffmpeg_args_fast(fps: int) -> list[str]:
@@ -175,11 +176,91 @@ def encode_animation_remote(anim, out_path: str, fps: int) -> bool:
             pass
 
 
+def encode_animation_via_job(
+    anim, out_path: str, fps: int, bucket: str = "renders"
+) -> bool:
+    """Alternative: upload PNG bundle to Supabase, trigger /encode_job, download MP4.
+
+    Returns True on success.
+    """
+    if not ENCODER_URL or not SUPABASE_URL or not SUPABASE_KEY:
+        return False
+    sb = create_client(SUPABASE_URL, SUPABASE_KEY)
+    base = ENCODER_URL.rstrip("/")
+
+    # 1) Build PNG bundle into temp file
+    tmp_png_path = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp_png_path = tmp.name
+            fig = getattr(anim, "_fig", None)
+            total_frames = getattr(anim, "total_frames", None)
+            if fig is None or total_frames is None:
+                raise RuntimeError("Invalid animation object")
+            for i in range(total_frames):
+                anim._draw_next_frame(i, blit=False)
+                buf = io.BytesIO()
+                fig.savefig(buf, format="png", facecolor="#F0F0F0", dpi=fig.dpi)
+                tmp.write(buf.getvalue())
+
+        # 2) Upload to Supabase Storage
+        key = f"jobs/{int(time.time() * 1000)}.pngpipe"
+        with open(tmp_png_path, "rb") as f:
+            data = f.read()
+        res = sb.storage.from_(bucket).upload(
+            key, data, {"content-type": "application/octet-stream", "upsert": True}
+        )
+        if getattr(res, "error", None):
+            print(f"[WARN] Supabase upload error: {res.error}")
+            return False
+        input_url = sb.storage.from_(bucket).get_public_url(key)
+
+        # 3) Trigger encoder job
+        out_key = f"renders/{int(time.time() * 1000)}.mp4"
+        job = {
+            "input_url": input_url,
+            "fps": int(fps),
+            "output_bucket": bucket,
+            "output_path": out_key,
+        }
+        r = requests.post(base + "/encode_job", json=job, timeout=(10, 1200))
+        r.raise_for_status()
+        url = r.json().get("url")
+        if not url:
+            print("[WARN] No URL returned from encode job")
+            return False
+
+        # 4) Download result
+        vr = requests.get(url, timeout=120, stream=True)
+        vr.raise_for_status()
+        with open(out_path, "wb") as f:
+            for chunk in vr.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    f.write(chunk)
+        try:
+            plt.close(anim._fig)
+        except Exception:
+            pass
+        return True
+    except Exception as e:
+        print(f"[WARN] encode_animation_via_job failed: {e}")
+        return False
+    finally:
+        try:
+            if tmp_png_path and os.path.exists(tmp_png_path):
+                os.remove(tmp_png_path)
+        except Exception:
+            pass
+
+
 def encode_animation(anim, out_path: str, fps: int) -> None:
-    """Encode using remote GPU encoder only; no CPU fallback."""
+    """Encode using remote GPU encoder via streaming; fallback to job workflow."""
     if not ENCODER_URL:
         raise RuntimeError("ENCODER_URL not set; GPU encoder required")
-    ok = encode_animation_remote(anim, out_path, fps)
+    # ok = encode_animation_remote(anim, out_path, fps)
+    ok = encode_animation_via_job(anim, out_path, fps)
+    # if not ok:
+    #     ok = encode_animation_via_job(anim, out_path, fps)
     if ok:
         try:
             plt.close(anim._fig)
