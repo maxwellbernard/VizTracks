@@ -1,6 +1,9 @@
 import base64
 import io
 import logging
+import os
+import queue
+import threading
 import time
 from typing import Iterator, Optional
 
@@ -21,12 +24,15 @@ def _iter_frames_jpeg(anim, facecolor: str = "#F0F0F0") -> Iterator[bytes]:
 
     def _save() -> bytes:
         buf = io.BytesIO()
+        jpeg_quality = int(os.getenv("JPEG_QUALITY", "80"))
         fig.savefig(
             buf,
             format="jpg",
             facecolor=facecolor,
             dpi=fig.dpi,
-            pil_kwargs={"quality": 90, "optimize": True, "progressive": True},
+            pil_kwargs={
+                "quality": jpeg_quality,
+            },
         )
         return buf.getvalue()
 
@@ -91,42 +97,81 @@ def _encode_remote(anim, out_path: str, fps: int) -> bool:
             if not session_id:
                 return False
             logger.info("client: started session id=%s fps=%s", session_id, fps)
-            batch: list[str] = []
-            batch_size = 60
-            sent = 0
+            # Overlap rendering and uploads using a queue + uploader thread
+            batch_size = int(os.getenv("APPEND_BATCH_SIZE", "180"))
+            frame_queue: "queue.Queue[Optional[bytes]]" = queue.Queue(
+                maxsize=batch_size * 3
+            )
+            send_done = threading.Event()
+            send_err: list[Exception] = []
 
+            def uploader() -> None:
+                try:
+                    sent_local = 0
+                    with _session() as up_sess:
+                        batch_local: list[str] = []
+                        while True:
+                            item = frame_queue.get()
+                            if item is None:
+                                # flush remaining
+                                if batch_local:
+                                    rr = up_sess.post(
+                                        f"{base}/append",
+                                        json={
+                                            "session_id": session_id,
+                                            "frames": batch_local,
+                                        },
+                                        timeout=180,
+                                    )
+                                    rr.raise_for_status()
+                                    sent_local += len(batch_local)
+                                    logger.info(
+                                        "client: appended final batch=%s total_sent=%s session=%s",
+                                        len(batch_local),
+                                        sent_local,
+                                        session_id,
+                                    )
+                                break
+                            # normal frame
+                            batch_local.append(base64.b64encode(item).decode("utf-8"))
+                            if len(batch_local) >= batch_size:
+                                rr = up_sess.post(
+                                    f"{base}/append",
+                                    json={
+                                        "session_id": session_id,
+                                        "frames": batch_local,
+                                    },
+                                    timeout=180,
+                                )
+                                rr.raise_for_status()
+                                sent_local += len(batch_local)
+                                logger.info(
+                                    "client: appended batch=%s total_sent=%s session=%s",
+                                    len(batch_local),
+                                    sent_local,
+                                    session_id,
+                                )
+                                batch_local.clear()
+                            frame_queue.task_done()
+                except Exception as ex:
+                    send_err.append(ex)
+                finally:
+                    send_done.set()
+
+            th = threading.Thread(target=uploader, name="uploader", daemon=True)
+            th.start()
+
+            # Producer: render frames and feed queue
             for jpg_bytes in _iter_frames_jpeg(anim, facecolor="#F0F0F0"):
-                batch.append(base64.b64encode(jpg_bytes).decode("utf-8"))
-                if len(batch) >= batch_size:
-                    r = sess.post(
-                        f"{base}/append",
-                        json={"session_id": session_id, "frames": batch},
-                        timeout=120,
-                    )
-                    r.raise_for_status()
-                    sent += len(batch)
-                    logger.info(
-                        "client: appended batch=%s total_sent=%s session=%s",
-                        len(batch),
-                        sent,
-                        session_id,
-                    )
-                    batch.clear()
+                if send_err:
+                    raise send_err[0]
+                frame_queue.put(jpg_bytes)
 
-            if batch:
-                r = sess.post(
-                    f"{base}/append",
-                    json={"session_id": session_id, "frames": batch},
-                    timeout=120,
-                )
-                r.raise_for_status()
-                sent += len(batch)
-                logger.info(
-                    "client: appended final batch=%s total_sent=%s session=%s",
-                    len(batch),
-                    sent,
-                    session_id,
-                )
+            # Signal completion and wait
+            frame_queue.put(None)
+            th.join()
+            if send_err:
+                raise send_err[0]
 
             # Finalize and stream file
             logger.info("client: finalizing session=%s", session_id)
