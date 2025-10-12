@@ -182,7 +182,7 @@ def _encode_remote(anim, out_path: str, fps: int) -> bool:
             flush_secs = float(os.getenv("UPLOAD_FLUSH_SECS", "0.75"))
             min_flush = int(os.getenv("MIN_UPLOAD_BATCH", "30"))
             frame_queue: "queue.Queue[Optional[bytes]]" = queue.Queue(
-                maxsize=batch_size * 3
+                maxsize=batch_size * 10
             )
             send_done = threading.Event()
             send_err: list[Exception] = []
