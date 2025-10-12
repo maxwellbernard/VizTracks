@@ -7,8 +7,12 @@ import threading
 import time
 from typing import Iterator, Optional
 
+import matplotlib as mpl
 import matplotlib.pyplot as plt
+import numpy as np
 import requests
+from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
+from PIL import Image
 from requests.adapters import HTTPAdapter, Retry
 
 from backend.core.config import ENCODER_URL
@@ -19,22 +23,53 @@ logger = logging.getLogger(__name__)
 def _iter_frames_jpeg(anim, facecolor: str = "#F0F0F0") -> Iterator[bytes]:
     """Yield JPEG bytes frame-by-frame without materializing the whole animation."""
     fig = anim._fig
+    # Speed-focused rendering settings
+    try:
+        dpi = int(os.getenv("OUTPUT_DPI", "110"))
+    except Exception:
+        dpi = 110
+    try:
+        out_w = int(os.getenv("OUTPUT_WIDTH", "0"))
+        out_h = int(os.getenv("OUTPUT_HEIGHT", "0"))
+    except Exception:
+        out_w = out_h = 0
+
+    try:
+        mpl.rcParams["text.antialiased"] = False
+        mpl.rcParams["patch.antialiased"] = False
+        mpl.rcParams["lines.antialiased"] = False
+        mpl.rcParams["agg.path.chunksize"] = 10000
+    except Exception:
+        pass
+
+    try:
+        fig.set_tight_layout(False)  # avoid layout passes
+        fig.set_dpi(dpi)
+        if out_w > 0 and out_h > 0:
+            fig.set_size_inches(out_w / dpi, out_h / dpi, forward=True)
+    except Exception:
+        pass
+
+    # Ensure Agg canvas and pre-create it
+    try:
+        canvas = FigureCanvas(fig)
+    except Exception:
+        canvas = fig.canvas  # fallback
     if hasattr(anim, "_init_draw"):
         anim._init_draw()
 
     def _save() -> bytes:
-        buf = io.BytesIO()
+        # Draw current frame to Agg buffer, then encode to JPEG via Pillow
+        canvas.draw()
+        w, h = canvas.get_width_height()
+        buf = np.frombuffer(canvas.buffer_rgba(), dtype=np.uint8).reshape(h, w, 4)
+        img = Image.fromarray(buf[:, :, :3], mode="RGB")
+        out = io.BytesIO()
         jpeg_quality = int(os.getenv("JPEG_QUALITY", "80"))
-        fig.savefig(
-            buf,
-            format="jpg",
-            facecolor=facecolor,
-            dpi=fig.dpi,
-            pil_kwargs={
-                "quality": jpeg_quality,
-            },
+        img.save(
+            out, format="JPEG", quality=jpeg_quality, subsampling=2, optimize=False
         )
-        return buf.getvalue()
+        return out.getvalue()
 
     frame_idx = 0
     if hasattr(anim, "new_frame_seq"):
@@ -99,6 +134,7 @@ def _encode_remote(anim, out_path: str, fps: int) -> bool:
             logger.info("client: started session id=%s fps=%s", session_id, fps)
             # Overlap rendering and uploads using a queue + uploader thread
             batch_size = int(os.getenv("APPEND_BATCH_SIZE", "180"))
+            batch_size = int(os.getenv("APPEND_BATCH_SIZE", "240"))
             frame_queue: "queue.Queue[Optional[bytes]]" = queue.Queue(
                 maxsize=batch_size * 3
             )
