@@ -25,9 +25,9 @@ def _iter_frames_jpeg(anim, facecolor: str = "#F0F0F0") -> Iterator[bytes]:
     fig = anim._fig
     # Speed-focused rendering settings
     try:
-        dpi = int(os.getenv("OUTPUT_DPI", "110"))
+        dpi = int(os.getenv("OUTPUT_DPI", "72"))
     except Exception:
-        dpi = 110
+        dpi = 72
     try:
         out_w = int(os.getenv("OUTPUT_WIDTH", "0"))
         out_h = int(os.getenv("OUTPUT_HEIGHT", "0"))
