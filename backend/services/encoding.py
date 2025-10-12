@@ -30,6 +30,7 @@ def _iter_frames_jpeg(anim, facecolor: str = "#F0F0F0") -> Iterator[bytes]:
         mpl.rcParams["patch.antialiased"] = False
         mpl.rcParams["lines.antialiased"] = False
         mpl.rcParams["agg.path.chunksize"] = 10000
+        mpl.rcParams["path.simplify"] = True
     except Exception:
         pass
 
@@ -243,7 +244,7 @@ def _encode_remote(anim, out_path: str, fps: int) -> bool:
                                         pixel_format=TJPF_RGB,
                                         quality=int(os.getenv("JPEG_QUALITY", "75")),
                                         jpeg_subsample=2,
-                                        flags=0,
+                                        flags=TJFLAG_FASTDCT,
                                     )
                                 else:
                                     img = Image.fromarray(arr, mode="RGB")
