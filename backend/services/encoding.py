@@ -51,7 +51,7 @@ def _iter_frames_jpeg(anim, facecolor: str = "#F0F0F0") -> Iterator[bytes]:
     except Exception:
         pass
 
-    renderer = os.getenv("RENDERER", "savefig").lower()
+    renderer = os.getenv("RENDERER").lower()
     canvas = None
     turbo = None
     if renderer != "savefig":
@@ -235,7 +235,7 @@ def _encode_remote(anim, out_path: str, fps: int) -> bool:
             min_flush = int(os.getenv("MIN_UPLOAD_BATCH", "30"))
             send_err: list[Exception] = []
 
-            renderer = os.getenv("RENDERER", "savefig").lower()
+            renderer = os.getenv("RENDERER").lower()
             use_two_stage = renderer == "agg"
 
             if use_two_stage:
