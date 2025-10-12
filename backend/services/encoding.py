@@ -518,6 +518,22 @@ def _encode_raw(anim, out_path: str, fps: int) -> None:
             yield arr.tobytes()
             idx += 1
 
+    # Optional upscale target: if OUTPUT_WIDTH/HEIGHT are set, request encoder scaling
+    tgt_w = None
+    tgt_h = None
+    try:
+        ow = int(os.getenv("OUTPUT_WIDTH", "0"))
+        oh = int(os.getenv("OUTPUT_HEIGHT", "0"))
+        if ow > 0 and oh > 0 and (ow != w or oh != h):
+            # enforce even dims for yuv420p
+            if ow % 2 == 1:
+                ow += 1
+            if oh % 2 == 1:
+                oh += 1
+            tgt_w, tgt_h = ow, oh
+    except Exception:
+        tgt_w = tgt_h = None
+
     headers = {
         "Content-Type": "application/octet-stream",
         "X-Width": str(w),
@@ -527,6 +543,9 @@ def _encode_raw(anim, out_path: str, fps: int) -> None:
         "Expect": "100-continue",
         "Connection": "close",
     }
+    if tgt_w and tgt_h:
+        headers["X-Target-Width"] = str(tgt_w)
+        headers["X-Target-Height"] = str(tgt_h)
 
     url = f"{base}/encode_raw"
     logger.info(

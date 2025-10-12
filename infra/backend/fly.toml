@@ -31,3 +31,6 @@ primary_region = 'arn'
   UPLOAD_QUEUE_MAX = "90"
   JPEG_SUBSAMPLE = "1"
   RENDERER = "agg"
+  RENDER_MAX_WIDTH = "1280"
+  RENDER_MAX_HEIGHT = "720"
+  FFMPEG_SCALER = "npp"

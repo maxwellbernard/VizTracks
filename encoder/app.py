@@ -398,6 +398,8 @@ def encode_raw():
         h = int(request.headers.get("X-Height", "0"))
         fps = int(request.headers.get("X-Fps", "30"))
         pix = (request.headers.get("X-PixFmt", "rgb24")).lower()
+        tgt_w = int(request.headers.get("X-Target-Width", "0"))
+        tgt_h = int(request.headers.get("X-Target-Height", "0"))
     except Exception:
         return jsonify({"error": "invalid headers"}), 400
     if w <= 0 or h <= 0 or fps <= 0:
@@ -412,7 +414,13 @@ def encode_raw():
         pass
     out_mp4 = sdir / "out.mp4"
 
-    # Build ffmpeg command: stdin rawvideo → MP4 NVENC file
+    # Enforce even dimensions for yuv420p
+    if "tgt_w" in locals() and tgt_w > 0 and (tgt_w % 2 == 1):
+        tgt_w += 1
+    if "tgt_h" in locals() and tgt_h > 0 and (tgt_h % 2 == 1):
+        tgt_h += 1
+
+    # Build ffmpeg command: stdin rawvideo → optional scale → MP4 NVENC file
     cmd = [
         "ffmpeg",
         "-hide_banner",
@@ -429,9 +437,28 @@ def encode_raw():
         str(fps),
         "-i",
         "pipe:0",
-        *get_ffmpeg_args(fps),
-        str(out_mp4),
     ]
+
+    # Insert scaler if target size requested and different
+    use_scale = (
+        "tgt_w" in locals()
+        and "tgt_h" in locals()
+        and tgt_w > 0
+        and tgt_h > 0
+        and (tgt_w != w or tgt_h != h)
+    )
+    if use_scale:
+        scaler = os.getenv("FFMPEG_SCALER", "auto").lower()
+        if scaler == "npp":
+            cmd += ["-vf", f"scale_npp={tgt_w}:{tgt_h}:interp_algo=lanczos"]
+        elif scaler == "cuda":
+            cmd += ["-vf", f"scale_cuda={tgt_w}:{tgt_h}"]
+        elif scaler == "auto":
+            cmd += ["-vf", f"scale_npp={tgt_w}:{tgt_h}:interp_algo=lanczos"]
+        else:
+            cmd += ["-vf", f"scale={tgt_w}:{tgt_h}:flags=lanczos"]
+
+    cmd += [*get_ffmpeg_args(fps), str(out_mp4)]
 
     app.logger.info("encode_raw: starting ffmpeg %s", " ".join(cmd))
 
