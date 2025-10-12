@@ -959,6 +959,7 @@ def create_bar_animation(
         frames=total_frames,
         interval=1,
         repeat=False,
+        blit=True,
     )
     t8 = time.time()
     print(f"Total animation creation time: {t8 - t7:.2f} seconds")
