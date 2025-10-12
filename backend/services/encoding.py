@@ -138,6 +138,66 @@ def _iter_frames_jpeg(anim, facecolor: str = "#F0F0F0") -> Iterator[bytes]:
             yield b
 
 
+def _iter_frames_rgb(anim, facecolor: str = "#F0F0F0") -> Iterator[np.ndarray]:
+    """Yield contiguous RGB numpy arrays using Agg renderer."""
+    fig = anim._fig
+    try:
+        dpi = int(os.getenv("OUTPUT_DPI", "72"))
+    except Exception:
+        dpi = 72
+    try:
+        out_w = int(os.getenv("OUTPUT_WIDTH", "0"))
+        out_h = int(os.getenv("OUTPUT_HEIGHT", "0"))
+    except Exception:
+        out_w = out_h = 0
+    try:
+        mpl.rcParams["text.antialiased"] = False
+        mpl.rcParams["patch.antialiased"] = False
+        mpl.rcParams["lines.antialiased"] = False
+        mpl.rcParams["agg.path.chunksize"] = 10000
+    except Exception:
+        pass
+    try:
+        fig.set_tight_layout(False)
+        fig.set_dpi(dpi)
+        if out_w > 0 and out_h > 0:
+            fig.set_size_inches(out_w / dpi, out_h / dpi, forward=True)
+    except Exception:
+        pass
+    canvas = FigureCanvas(fig)
+    if hasattr(anim, "_init_draw"):
+        anim._init_draw()
+
+    frame_idx = 0
+
+    def grab_rgb() -> np.ndarray:
+        canvas.draw()
+        w, h = canvas.get_width_height()
+        buf = np.frombuffer(canvas.buffer_rgba(), dtype=np.uint8).reshape(h, w, 4)
+        # ensure C-contiguous copy of RGB
+        return buf[:, :, :3].copy(order="C")
+
+    if hasattr(anim, "new_frame_seq"):
+        for framedata in anim.new_frame_seq():
+            anim._draw_frame(framedata)
+            rgb = grab_rgb()
+            if frame_idx % 200 == 0:
+                logger.info("client: prepared frame %s (rgb)", frame_idx)
+            frame_idx += 1
+            yield rgb
+    else:
+        while True:
+            try:
+                anim._draw_next_frame(frame_idx, blit=False)
+            except StopIteration:
+                break
+            rgb = grab_rgb()
+            if frame_idx % 200 == 0:
+                logger.info("client: prepared frame %s (rgb)", frame_idx)
+            frame_idx += 1
+            yield rgb
+
+
 def _session() -> requests.Session:
     s = requests.Session()
     retries = Retry(
@@ -177,27 +237,100 @@ def _encode_remote(anim, out_path: str, fps: int) -> bool:
             if not session_id:
                 return False
             logger.info("client: started session id=%s fps=%s", session_id, fps)
-            # Overlap rendering and uploads using a queue + uploader thread
+            # Overlap rendering, JPEG encoding, and uploads
             batch_size = int(os.getenv("APPEND_BATCH_SIZE", "120"))
             flush_secs = float(os.getenv("UPLOAD_FLUSH_SECS", "0.75"))
             min_flush = int(os.getenv("MIN_UPLOAD_BATCH", "30"))
-            frame_queue: "queue.Queue[Optional[bytes]]" = queue.Queue(
-                maxsize=batch_size * 10
-            )
-            send_done = threading.Event()
             send_err: list[Exception] = []
 
-            def uploader() -> None:
-                try:
-                    sent_local = 0
-                    with _session() as up_sess:
-                        batch_local: list[str] = []
-                        last_flush = time.time()
+            renderer = os.getenv("RENDERER", "savefig").lower()
+            use_two_stage = renderer == "agg"
+
+            if use_two_stage:
+                # Stage 1: raw RGB queue; Stage 2: base64 JPEG queue
+                raw_q: "queue.Queue[Optional[np.ndarray]]" = queue.Queue(
+                    maxsize=batch_size * 2
+                )
+                jpg_q: "queue.Queue[Optional[str]]" = queue.Queue(
+                    maxsize=batch_size * 2
+                )
+
+                def encoder_worker() -> None:
+                    try:
+                        try:
+                            from turbojpeg import TJPF_RGB, TurboJPEG  # type: ignore
+
+                            turbo = TurboJPEG()
+                        except Exception:
+                            turbo = None  # type: ignore
+                        q = raw_q
                         while True:
-                            item = frame_queue.get()
-                            if item is None:
-                                # flush remaining
-                                if batch_local:
+                            arr = q.get()
+                            if arr is None:
+                                jpg_q.put(None)
+                                q.task_done()
+                                break
+                            try:
+                                if turbo is not None:
+                                    jpg_bytes = turbo.encode(
+                                        arr,
+                                        pixel_format=TJPF_RGB,
+                                        quality=int(os.getenv("JPEG_QUALITY", "75")),
+                                        jpeg_subsample=2,
+                                        flags=0,
+                                    )  # type: ignore
+                                else:
+                                    img = Image.fromarray(arr, mode="RGB")
+                                    out = io.BytesIO()
+                                    img.save(
+                                        out,
+                                        format="JPEG",
+                                        quality=int(os.getenv("JPEG_QUALITY", "75")),
+                                        subsampling=2,
+                                        optimize=False,
+                                    )
+                                    jpg_bytes = out.getvalue()
+                                jpg_q.put(base64.b64encode(jpg_bytes).decode("utf-8"))
+                            finally:
+                                q.task_done()
+                    except Exception as ex:
+                        send_err.append(ex)
+
+                def uploader_worker() -> None:
+                    try:
+                        sent_local = 0
+                        with _session() as up_sess:
+                            batch_local: list[str] = []
+                            last_flush = time.time()
+                            while True:
+                                item = jpg_q.get()
+                                if item is None:
+                                    if batch_local:
+                                        rr = up_sess.post(
+                                            f"{base}/append",
+                                            json={
+                                                "session_id": session_id,
+                                                "frames": batch_local,
+                                            },
+                                            timeout=180,
+                                        )
+                                        rr.raise_for_status()
+                                        sent_local += len(batch_local)
+                                        logger.info(
+                                            "client: appended final batch=%s total_sent=%s session=%s",
+                                            len(batch_local),
+                                            sent_local,
+                                            session_id,
+                                        )
+                                    jpg_q.task_done()
+                                    break
+                                batch_local.append(item)
+                                now = time.time()
+                                should_time_flush = (now - last_flush) >= flush_secs
+                                if len(batch_local) >= batch_size or (
+                                    should_time_flush
+                                    and (len(batch_local) >= min_flush or jpg_q.empty())
+                                ):
                                     rr = up_sess.post(
                                         f"{base}/append",
                                         json={
@@ -209,62 +342,112 @@ def _encode_remote(anim, out_path: str, fps: int) -> bool:
                                     rr.raise_for_status()
                                     sent_local += len(batch_local)
                                     logger.info(
-                                        "client: appended final batch=%s total_sent=%s session=%s",
+                                        "client: appended batch=%s total_sent=%s session=%s",
                                         len(batch_local),
                                         sent_local,
                                         session_id,
                                     )
-                                frame_queue.task_done()
-                                break
-                            # normal frame
-                            batch_local.append(base64.b64encode(item).decode("utf-8"))
-                            now = time.time()
-                            should_time_flush = (now - last_flush) >= flush_secs
-                            # Only time-flush if we have a reasonable batch or nothing else is queued
-                            if len(batch_local) >= batch_size or (
-                                should_time_flush
-                                and (
-                                    len(batch_local) >= min_flush or frame_queue.empty()
-                                )
-                            ):
-                                rr = up_sess.post(
-                                    f"{base}/append",
-                                    json={
-                                        "session_id": session_id,
-                                        "frames": batch_local,
-                                    },
-                                    timeout=180,
-                                )
-                                rr.raise_for_status()
-                                sent_local += len(batch_local)
-                                logger.info(
-                                    "client: appended batch=%s total_sent=%s session=%s",
-                                    len(batch_local),
-                                    sent_local,
-                                    session_id,
-                                )
-                                batch_local.clear()
-                                last_flush = now
-                            frame_queue.task_done()
-                except Exception as ex:
-                    send_err.append(ex)
-                finally:
-                    send_done.set()
+                                    batch_local.clear()
+                                    last_flush = now
+                                jpg_q.task_done()
+                    except Exception as ex:
+                        send_err.append(ex)
 
-            th = threading.Thread(target=uploader, name="uploader", daemon=True)
-            th.start()
+                enc_th = threading.Thread(
+                    target=encoder_worker, name="jpeg-encoder", daemon=True
+                )
+                up_th = threading.Thread(
+                    target=uploader_worker, name="uploader", daemon=True
+                )
+                enc_th.start()
+                up_th.start()
 
-            # Producer: render frames and feed queue
-            for jpg_bytes in _iter_frames_jpeg(anim, facecolor="#F0F0F0"):
+                for rgb in _iter_frames_rgb(anim, facecolor="#F0F0F0"):
+                    if send_err:
+                        raise send_err[0]
+                    raw_q.put(rgb)
+                raw_q.put(None)
+                enc_th.join()
+                up_th.join()
                 if send_err:
                     raise send_err[0]
-                frame_queue.put(jpg_bytes)
+            else:
+                # Fallback: single-stage (JPEG generation in main thread, upload in background)
+                frame_q: "queue.Queue[Optional[bytes]]" = queue.Queue(
+                    maxsize=batch_size * 3
+                )
 
-            # Signal completion and wait
-            frame_queue.put(None)
-            th.join()
-            if send_err:
-                raise send_err[0]
+                def uploader() -> None:
+                    try:
+                        sent_local = 0
+                        with _session() as up_sess:
+                            batch_local: list[str] = []
+                            last_flush = time.time()
+                            while True:
+                                item = frame_q.get()
+                                if item is None:
+                                    if batch_local:
+                                        rr = up_sess.post(
+                                            f"{base}/append",
+                                            json={
+                                                "session_id": session_id,
+                                                "frames": batch_local,
+                                            },
+                                            timeout=180,
+                                        )
+                                        rr.raise_for_status()
+                                        sent_local += len(batch_local)
+                                        logger.info(
+                                            "client: appended final batch=%s total_sent=%s session=%s",
+                                            len(batch_local),
+                                            sent_local,
+                                            session_id,
+                                        )
+                                    frame_q.task_done()
+                                    break
+                                # base64 encode here
+                                b64 = base64.b64encode(item).decode("utf-8")
+                                batch_local.append(b64)
+                                now = time.time()
+                                should_time_flush = (now - last_flush) >= flush_secs
+                                if len(batch_local) >= batch_size or (
+                                    should_time_flush
+                                    and (
+                                        len(batch_local) >= min_flush or frame_q.empty()
+                                    )
+                                ):
+                                    rr = up_sess.post(
+                                        f"{base}/append",
+                                        json={
+                                            "session_id": session_id,
+                                            "frames": batch_local,
+                                        },
+                                        timeout=180,
+                                    )
+                                    rr.raise_for_status()
+                                    sent_local += len(batch_local)
+                                    logger.info(
+                                        "client: appended batch=%s total_sent=%s session=%s",
+                                        len(batch_local),
+                                        sent_local,
+                                        session_id,
+                                    )
+                                    batch_local.clear()
+                                    last_flush = now
+                                frame_q.task_done()
+                    except Exception as ex:
+                        send_err.append(ex)
+
+                up_th = threading.Thread(target=uploader, name="uploader", daemon=True)
+                up_th.start()
+                for jpg in _iter_frames_jpeg(anim, facecolor="#F0F0F0"):
+                    if send_err:
+                        raise send_err[0]
+                    frame_q.put(jpg)
+                frame_q.put(None)
+                up_th.join()
+                if send_err:
+                    raise send_err[0]
 
             # Finalize and stream file
             logger.info("client: finalizing session=%s", session_id)
