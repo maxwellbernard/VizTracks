@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -149,7 +150,15 @@ def start():
     sdir = base / sid
     sdir.mkdir(parents=True, exist_ok=True)
 
-    SESSIONS[sid] = {"dir": sdir, "fps": fps, "count": 0, "created": time.time()}
+    SESSIONS[sid] = {
+        "dir": sdir,
+        "fps": fps,
+        "count": 0,
+        "created": time.time(),
+        "lock": threading.Lock(),
+        "finalizing": False,
+        "finalized": False,
+    }
     app.logger.info("session %s started (fps=%d, dir=%s)", sid, fps, sdir)
     return jsonify({"session_id": sid})
 
@@ -176,6 +185,13 @@ def append():
         return jsonify({"error": "too many frames in one batch"}), 413
 
     meta = SESSIONS[sid]
+    # Disallow appends while finalizing or after finalized to avoid corruption
+    if meta.get("finalizing"):
+        app.logger.warning("append: session=%s is finalizing; rejecting batch", sid)
+        return jsonify({"error": "session is finalizing"}), 409
+    if meta.get("finalized"):
+        app.logger.warning("append: session=%s already finalized; rejecting batch", sid)
+        return jsonify({"error": "session already finalized"}), 409
     sdir: Path = meta["dir"]
     total = meta["count"]
 
@@ -224,52 +240,80 @@ def finalize():
         return jsonify({"error": "invalid session_id"}), 400
 
     meta = SESSIONS[sid]
-    sdir: Path = meta["dir"]
-    fps: int = meta["fps"]
-    frames: int = meta["count"]
+    lock: threading.Lock = meta.get("lock")  # type: ignore
+    if meta.get("finalized") and meta.get("payload"):
+        # Idempotent finalize: return cached result
+        return jsonify(meta["payload"])  # type: ignore[index]
 
-    if frames <= 0:
-        _safe_cleanup_session(sid)
-        return jsonify({"error": "no frames"}), 400
+    # Prevent concurrent appends/finalize
+    if not lock:
+        lock = threading.Lock()
+        meta["lock"] = lock
 
-    out_mp4 = sdir / "out.mp4"
+    with lock:
+        if meta.get("finalized") and meta.get("payload"):
+            return jsonify(meta["payload"])  # type: ignore[index]
+        if meta.get("finalizing"):
+            # Another thread is finalizing; brief wait-loop for up to ~10s
+            app.logger.info("finalize: session %s already finalizing; waiting", sid)
+            waited = 0.0
+            while waited < 10.0 and not meta.get("finalized"):
+                time.sleep(0.1)
+                waited += 0.1
+            if meta.get("finalized") and meta.get("payload"):
+                return jsonify(meta["payload"])  # type: ignore[index]
+            # Fallthrough to attempt finalize if still not done
 
-    cmd = [
-        "ffmpeg",
-        "-loglevel",
-        "warning",
-        "-y",
-        "-framerate",
-        str(fps),
-        "-i",
-        str(sdir / FFMPEG_INPUT_PATTERN),
-        *get_ffmpeg_args(fps),
-        str(out_mp4),
-    ]
+        sdir: Path = meta["dir"]
+        fps: int = meta["fps"]
+        frames: int = meta["count"]
 
-    app.logger.info("finalizing session %s with %d frames (fps=%d)", sid, frames, fps)
-    try:
-        proc = subprocess.run(cmd, capture_output=True, text=True)
-        if proc.returncode != 0 or not out_mp4.exists():
-            app.logger.error("ffmpeg failed: %s %s", proc.stdout, proc.stderr)
-            _safe_cleanup_session(sid)
-            return jsonify({"error": "ffmpeg failed"}), 500
+        if frames <= 0:
+            return jsonify({"error": "no frames"}), 400
 
-        video_b64 = base64.b64encode(out_mp4.read_bytes()).decode("utf-8")
-        duration = frames / float(fps)
-        payload = {
-            "video": video_b64,
-            "frames": frames,
-            "duration_s": round(duration, 3),
-        }
+        out_mp4 = sdir / "out.mp4"
 
-        if CLEANUP_ON_FINALIZE:
-            _safe_cleanup_session(sid)
-        return jsonify(payload)
-    except Exception as e:
-        app.logger.exception("finalize failed for session %s: %s", sid, e)
-        _safe_cleanup_session(sid)
-        return jsonify({"error": "finalize failed"}), 500
+        cmd = [
+            "ffmpeg",
+            "-loglevel",
+            "warning",
+            "-y",
+            "-framerate",
+            str(fps),
+            "-i",
+            str(sdir / FFMPEG_INPUT_PATTERN),
+            *get_ffmpeg_args(fps),
+            str(out_mp4),
+        ]
+
+        app.logger.info(
+            "finalizing session %s with %d frames (fps=%d)", sid, frames, fps
+        )
+        meta["finalizing"] = True
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True)
+            if proc.returncode != 0 or not out_mp4.exists():
+                app.logger.error("ffmpeg failed: %s %s", proc.stdout, proc.stderr)
+                meta["finalizing"] = False
+                return jsonify({"error": "ffmpeg failed"}), 500
+
+            video_b64 = base64.b64encode(out_mp4.read_bytes()).decode("utf-8")
+            duration = frames / float(fps)
+            payload = {
+                "video": video_b64,
+                "frames": frames,
+                "duration_s": round(duration, 3),
+            }
+            meta["payload"] = payload
+            meta["finalized"] = True
+
+            if CLEANUP_ON_FINALIZE:
+                _safe_cleanup_session(sid)
+            return jsonify(payload)
+        except Exception as e:
+            app.logger.exception("finalize failed for session %s: %s", sid, e)
+            meta["finalizing"] = False
+            return jsonify({"error": "finalize failed"}), 500
 
 
 def _safe_cleanup_session(sid: str):
