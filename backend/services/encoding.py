@@ -87,7 +87,8 @@ def encode_animation_remote(anim, out_path: str, fps: int) -> bool:
         if not wait_for_ready(base):
             print("[WARN] Encoder health did not become ready before deadline")
             return False
-        time.sleep(5)
+        # Small stabilization to avoid proxy replays right after warmup
+        time.sleep(8)
 
         url = base + f"/encode_pipe?fps={int(fps)}"
         headers: dict[str, str] = {"Content-Type": "application/octet-stream"}
@@ -105,15 +106,19 @@ def encode_animation_remote(anim, out_path: str, fps: int) -> bool:
                 tmp.write(buf.getvalue())
             size = tmp.tell()
 
+        # Let requests compute Content-Length from the file, but also include our own for proxies
         headers["Content-Length"] = str(size)
-        headers["Connection"] = "keep-alive"
+        # Prefer closing the connection after request to avoid proxy keep-alive edge cases
+        headers["Connection"] = "close"
         headers["Accept-Encoding"] = "identity"
+        headers["X-Request-ID"] = str(int(time.time() * 1000))
 
         def do_post_file():
             with open(tmp_path, "rb") as f:
-                return requests.post(url, data=f, headers=headers, timeout=1200)
+                # Explicit (connect, read) timeouts; large read timeout for encode duration
+                return requests.post(url, data=f, headers=headers, timeout=(10, 1200))
 
-        attempts = 3
+        attempts = 4
         resp = None
         last_exc: Exception | None = None
         for attempt in range(1, attempts + 1):
@@ -124,7 +129,7 @@ def encode_animation_remote(anim, out_path: str, fps: int) -> bool:
                 break
             except (req_exc.ConnectionError, req_exc.Timeout, req_exc.HTTPError) as e:
                 status = getattr(getattr(e, "response", None), "status_code", None)
-                retriable = status in (502, 503, 504) or isinstance(
+                retriable = status in (500, 502, 503, 504) or isinstance(
                     e, (req_exc.ConnectionError, req_exc.Timeout)
                 )
                 last_exc = e
