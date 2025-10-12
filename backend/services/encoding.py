@@ -6,6 +6,7 @@ import queue
 import threading
 import time
 from typing import Iterator, Optional
+from typing import Iterator as TypingIterator
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -468,6 +469,67 @@ def _encode_remote(anim, out_path: str, fps: int) -> bool:
         return False
 
 
+def _encode_raw(anim, out_path: str, fps: int) -> None:
+    """Stream raw RGB frames to the encoder's /encode_raw endpoint and save MP4."""
+    if not ENCODER_URL:
+        raise RuntimeError("ENCODER_URL not set; GPU encoder required")
+
+    base = ENCODER_URL.rstrip("/")
+
+    # Prime the first frame to get dimensions
+    frame_iter = _iter_frames_rgb(anim, facecolor="#F0F0F0")
+    try:
+        first = next(frame_iter)
+    except StopIteration:
+        raise RuntimeError("No frames to encode")
+
+    if not isinstance(first, np.ndarray) or first.ndim != 3 or first.shape[2] != 3:
+        raise RuntimeError("Frame must be HxWx3 uint8 array")
+
+    h, w, _ = first.shape
+
+    def body() -> TypingIterator[bytes]:
+        # yield first then the rest
+        yield first.tobytes()
+        idx = 1
+        for arr in frame_iter:
+            if idx % 200 == 0:
+                logger.info("client: prepared frame %d (raw streaming)", idx)
+            # ensure contiguous
+            if not arr.flags.c_contiguous:
+                arr = np.ascontiguousarray(arr)
+            yield arr.tobytes()
+            idx += 1
+
+    headers = {
+        "Content-Type": "application/octet-stream",
+        "X-Width": str(w),
+        "X-Height": str(h),
+        "X-Fps": str(fps),
+        "X-PixFmt": "rgb24",
+    }
+
+    url = f"{base}/encode_raw"
+    logger.info(
+        "client: raw encode start %sx%s fps=%s -> %s",
+        w,
+        h,
+        fps,
+        out_path,
+    )
+    with requests.post(
+        url, data=body(), headers=headers, stream=True, timeout=1800
+    ) as r:
+        r.raise_for_status()
+        total = 0
+        with open(out_path, "wb") as f:
+            for chunk in r.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    f.write(chunk)
+                    total += len(chunk)
+        logger.info("client: raw encode ok bytes=%.2f MiB", total / (1024 * 1024))
+
+
 def encode_animation(anim, out_path: str, fps: int) -> None:
     """
     Remote GPU encoder only (no CPU fallback).
@@ -476,9 +538,8 @@ def encode_animation(anim, out_path: str, fps: int) -> None:
     fig: Optional[plt.Figure] = getattr(anim, "_fig", None)
     try:
         logger.info("client: encode_animation start fps=%s out=%s", fps, out_path)
-        ok = _encode_remote(anim, out_path, fps)
-        if not ok:
-            raise RuntimeError("Remote GPU encoder failed or ENCODER_URL not set")
+        # Use raw streaming path by default
+        _encode_raw(anim, out_path, fps)
     finally:
         try:
             if fig is not None:
