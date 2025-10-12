@@ -31,3 +31,6 @@ primary_region = "ord"
   cpu_kind = "performance"
   cpus = 4
   memory = "16gb"
+
+[env]
+  RENDERER = "agg"
