@@ -10,7 +10,7 @@ import requests
 from requests import exceptions as req_exc
 from supabase import create_client
 
-from backend.core.config import ENCODER_URL, SUPABASE_KEY, SUPABASE_URL
+from backend.core.config import ENCODER_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_URL
 
 
 def ffmpeg_args_fast(fps: int) -> list[str]:
@@ -183,9 +183,9 @@ def encode_animation_via_job(
 
     Returns True on success.
     """
-    if not ENCODER_URL or not SUPABASE_URL or not SUPABASE_KEY:
+    if not ENCODER_URL or not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
         return False
-    sb = create_client(SUPABASE_URL, SUPABASE_KEY)
+    sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
     base = ENCODER_URL.rstrip("/")
 
     # 1) Build PNG bundle into temp file
