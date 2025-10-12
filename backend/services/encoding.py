@@ -153,6 +153,7 @@ def _encode_remote(anim, out_path: str, fps: int) -> bool:
             # Overlap rendering and uploads using a queue + uploader thread
             batch_size = int(os.getenv("APPEND_BATCH_SIZE", "120"))
             flush_secs = float(os.getenv("UPLOAD_FLUSH_SECS", "0.75"))
+            min_flush = int(os.getenv("MIN_UPLOAD_BATCH", "30"))
             frame_queue: "queue.Queue[Optional[bytes]]" = queue.Queue(
                 maxsize=batch_size * 3
             )
@@ -191,9 +192,13 @@ def _encode_remote(anim, out_path: str, fps: int) -> bool:
                             # normal frame
                             batch_local.append(base64.b64encode(item).decode("utf-8"))
                             now = time.time()
-                            if (
-                                len(batch_local) >= batch_size
-                                or (now - last_flush) >= flush_secs
+                            should_time_flush = (now - last_flush) >= flush_secs
+                            # Only time-flush if we have a reasonable batch or nothing else is queued
+                            if len(batch_local) >= batch_size or (
+                                should_time_flush
+                                and (
+                                    len(batch_local) >= min_flush or frame_queue.empty()
+                                )
                             ):
                                 rr = up_sess.post(
                                     f"{base}/append",
