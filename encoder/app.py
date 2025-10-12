@@ -31,16 +31,15 @@ def nvenc_ready_cached() -> bool:
 
 def get_ffmpeg_args(fps: int) -> list[str]:
     return [
-        "-hwaccel",
-        "cuda",
-        "-hwaccel_output_format",
-        "cuda",
+        # Encode with NVENC; no hwaccel flags needed for image2pipe PNG input
         "-c:v",
         "h264_nvenc",
         "-preset",
         "p1",
         "-rc",
-        "vbr_hq",
+        "vbr",
+        "-tune",
+        "hq",
         "-cq",
         "30",
         "-b:v",
@@ -227,6 +226,18 @@ def encode_pipe():
             chunk = request.stream.read(chunk_size)
             if not chunk:
                 break
+            # If ffmpeg has already exited, capture stderr and abort early
+            if proc.poll() is not None:
+                try:
+                    err_txt = proc.stderr.read().decode("utf-8", errors="ignore")
+                except Exception:
+                    err_txt = "<stderr read failed>"
+                app.logger.error(
+                    "ffmpeg exited early (rc=%s) before input complete; stderr=\n%s",
+                    proc.returncode,
+                    err_txt,
+                )
+                return jsonify({"error": "ffmpeg exited early", "detail": err_txt}), 500
             scan_buf = carry + chunk
             idx = 0
             while True:
@@ -240,7 +251,18 @@ def encode_pipe():
                 idx = hit + sig_len
 
             total_bytes += len(chunk)
-            proc.stdin.write(chunk)
+            try:
+                proc.stdin.write(chunk)
+            except BrokenPipeError:
+                # ffmpeg likely errored; read stderr for details
+                try:
+                    err_txt = proc.stderr.read().decode("utf-8", errors="ignore")
+                except Exception:
+                    err_txt = "<stderr read failed>"
+                app.logger.error(
+                    "write to ffmpeg stdin failed: Broken pipe; stderr=\n%s", err_txt
+                )
+                return jsonify({"error": "ffmpeg broken pipe", "detail": err_txt}), 500
             carry = (
                 scan_buf[-(sig_len - 1) :]
                 if len(scan_buf) >= (sig_len - 1)
