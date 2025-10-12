@@ -128,24 +128,27 @@ def _encode_remote(anim, out_path: str, fps: int) -> bool:
                     session_id,
                 )
 
-            # Finalize and write file
+            # Finalize and stream file
             logger.info("client: finalizing session=%s", session_id)
-            fin = sess.post(
-                f"{base}/finalize", json={"session_id": session_id}, timeout=600
+            # Disable retries for finalize by using a one-off request without the session's retry adapter
+            fin = requests.post(
+                f"{base}/finalize",
+                json={"session_id": session_id},
+                timeout=600,
+                stream=True,
             )
             fin.raise_for_status()
-            video_b64 = fin.json().get("video")
-            if not video_b64:
-                return False
-
-            mp4_bytes = base64.b64decode(video_b64)
+            total = 0
+            with open(out_path, "wb") as f:
+                for chunk in fin.iter_content(chunk_size=1024 * 1024):  # 1 MiB chunks
+                    if chunk:
+                        f.write(chunk)
+                        total += len(chunk)
             logger.info(
                 "client: finalize ok bytes=%.2f MiB session=%s",
-                len(mp4_bytes) / (1024 * 1024),
+                total / (1024 * 1024),
                 session_id,
             )
-            with open(out_path, "wb") as f:
-                f.write(mp4_bytes)
             if t0 is not None:
                 logger.info(
                     "client: total remote encode time=%.2fs",

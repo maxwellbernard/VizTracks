@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 from typing import Dict, Optional
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_file
 
 app = Flask(__name__)
 _level = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -241,9 +241,11 @@ def finalize():
 
     meta = SESSIONS[sid]
     lock: threading.Lock = meta.get("lock")  # type: ignore
-    if meta.get("finalized") and meta.get("payload"):
-        # Idempotent finalize: return cached result
-        return jsonify(meta["payload"])  # type: ignore[index]
+    # If already finalized and file exists, return it idempotently
+    sdir_existing: Path = SESSIONS[sid]["dir"]
+    out_existing = sdir_existing / "out.mp4"
+    if meta.get("finalized") and out_existing.exists():
+        return send_file(out_existing, mimetype="video/mp4")
 
     # Prevent concurrent appends/finalize
     if not lock:
@@ -251,8 +253,8 @@ def finalize():
         meta["lock"] = lock
 
     with lock:
-        if meta.get("finalized") and meta.get("payload"):
-            return jsonify(meta["payload"])  # type: ignore[index]
+        if meta.get("finalized") and (Path(meta["dir"]) / "out.mp4").exists():
+            return send_file(Path(meta["dir"]) / "out.mp4", mimetype="video/mp4")
         if meta.get("finalizing"):
             # Another thread is finalizing; brief wait-loop for up to ~10s
             app.logger.info("finalize: session %s already finalizing; waiting", sid)
@@ -260,8 +262,8 @@ def finalize():
             while waited < 10.0 and not meta.get("finalized"):
                 time.sleep(0.1)
                 waited += 0.1
-            if meta.get("finalized") and meta.get("payload"):
-                return jsonify(meta["payload"])  # type: ignore[index]
+            if meta.get("finalized") and (Path(meta["dir"]) / "out.mp4").exists():
+                return send_file(Path(meta["dir"]) / "out.mp4", mimetype="video/mp4")
             # Fallthrough to attempt finalize if still not done
 
         sdir: Path = meta["dir"]
@@ -297,19 +299,17 @@ def finalize():
                 meta["finalizing"] = False
                 return jsonify({"error": "ffmpeg failed"}), 500
 
-            video_b64 = base64.b64encode(out_mp4.read_bytes()).decode("utf-8")
-            duration = frames / float(fps)
-            payload = {
-                "video": video_b64,
-                "frames": frames,
-                "duration_s": round(duration, 3),
-            }
-            meta["payload"] = payload
+            # Mark finalized and return the file as binary; keep session for idempotency
             meta["finalized"] = True
-
-            if CLEANUP_ON_FINALIZE:
-                _safe_cleanup_session(sid)
-            return jsonify(payload)
+            # Optional: include helpful headers (frames, duration)
+            resp = send_file(out_mp4, mimetype="video/mp4")
+            try:
+                # Attach metadata as headers (non-critical)
+                resp.headers["X-Frames"] = str(frames)
+                resp.headers["X-Duration-Seconds"] = str(round(frames / float(fps), 3))
+            except Exception:
+                pass
+            return resp
         except Exception as e:
             app.logger.exception("finalize failed for session %s: %s", sid, e)
             meta["finalizing"] = False
