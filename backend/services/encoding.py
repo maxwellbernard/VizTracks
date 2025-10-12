@@ -1,4 +1,5 @@
 import base64
+import os
 import queue
 import threading
 import time
@@ -30,13 +31,28 @@ log = logging.getLogger("client")
 
 
 # Tunables
-TARGET_W, TARGET_H = 1280, 720
-TARGET_DPI = 96
-JPEG_QUALITY = 80
-JPEG_SUBSAMPLE = 1
-BATCH_SIZE = 30
-FLUSH_INTERVAL_S = 1.0
-QUEUE_MAX = 16
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except Exception:
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except Exception:
+        return default
+
+
+TARGET_W = _env_int("OUTPUT_WIDTH", 1280)
+TARGET_H = _env_int("OUTPUT_HEIGHT", 720)
+TARGET_DPI = _env_int("OUTPUT_DPI", 96)
+JPEG_QUALITY = _env_int("JPEG_QUALITY", 80)
+JPEG_SUBSAMPLE = _env_int("JPEG_SUBSAMPLE", 1)
+BATCH_SIZE = _env_int("APPEND_BATCH_SIZE", 30)
+FLUSH_INTERVAL_S = _env_float("UPLOAD_FLUSH_SECS", 1.0)
+QUEUE_MAX = _env_int("UPLOAD_QUEUE_MAX", max(16, BATCH_SIZE * 2))
 
 
 # Helpers
@@ -78,7 +94,10 @@ def _iter_frames_rgb(
     def grab() -> Tuple[bytes, int, int]:
         canvas.draw()
         w, h = canvas.get_width_height()
-        return canvas.tostring_rgb(), w, h
+
+        buf = np.frombuffer(canvas.buffer_rgba(), dtype=np.uint8).reshape((h, w, 4))
+        rgb = buf[:, :, :3].copy(order="C")
+        return rgb.tobytes(), w, h
 
     if hasattr(anim, "new_frame_seq"):
         for framedata in anim.new_frame_seq():
@@ -231,7 +250,6 @@ def encode_animation(anim, out_path: str, fps: int) -> None:
         q.put(None)
         worker.join()
 
-        t_enc0 = time.monotonic()
         log.info("client: finalizing session=%s", sid)
         _finalize_to_file(sess, base, sid, out_path)
         t1 = time.monotonic()
