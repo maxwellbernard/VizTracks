@@ -10,12 +10,13 @@ import uuid
 from pathlib import Path
 from typing import Dict, Optional
 
-from flask import Flask, jsonify, request, send_file
+from flask import Flask, Response, jsonify, request
 
 app = Flask(__name__)
 _level = os.getenv("LOG_LEVEL", "INFO").upper()
 app.logger.setLevel(getattr(logging, _level, logging.INFO))
 app.logger.info("encoder starting with LOG_LEVEL=%s", _level)
+app.config["USE_X_SENDFILE"] = False
 
 READY: Optional[bool] = None
 
@@ -241,11 +242,26 @@ def finalize():
 
     meta = SESSIONS[sid]
     lock: threading.Lock = meta.get("lock")  # type: ignore
-    # If already finalized and file exists, return it idempotently
+    # If already finalized and file exists, return it idempotently (streamed)
     sdir_existing: Path = SESSIONS[sid]["dir"]
     out_existing = sdir_existing / "out.mp4"
     if meta.get("finalized") and out_existing.exists():
-        return send_file(out_existing, mimetype="video/mp4")
+
+        def _iter_existing():
+            with open(out_existing, "rb") as f:
+                while True:
+                    chunk = f.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    yield chunk
+
+        resp = Response(_iter_existing(), mimetype="video/mp4")
+        try:
+            resp.headers["Content-Length"] = str(out_existing.stat().st_size)
+        except Exception:
+            pass
+        resp.headers["Connection"] = "close"
+        return resp
 
     # Prevent concurrent appends/finalize
     if not lock:
@@ -254,7 +270,23 @@ def finalize():
 
     with lock:
         if meta.get("finalized") and (Path(meta["dir"]) / "out.mp4").exists():
-            return send_file(Path(meta["dir"]) / "out.mp4", mimetype="video/mp4")
+            out_path = Path(meta["dir"]) / "out.mp4"
+
+            def _iter2():
+                with open(out_path, "rb") as f:
+                    while True:
+                        chunk = f.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        yield chunk
+
+            resp = Response(_iter2(), mimetype="video/mp4")
+            try:
+                resp.headers["Content-Length"] = str(out_path.stat().st_size)
+            except Exception:
+                pass
+            resp.headers["Connection"] = "close"
+            return resp
         if meta.get("finalizing"):
             # Another thread is finalizing; brief wait-loop for up to ~10s
             app.logger.info("finalize: session %s already finalizing; waiting", sid)
@@ -263,7 +295,23 @@ def finalize():
                 time.sleep(0.1)
                 waited += 0.1
             if meta.get("finalized") and (Path(meta["dir"]) / "out.mp4").exists():
-                return send_file(Path(meta["dir"]) / "out.mp4", mimetype="video/mp4")
+                out_path = Path(meta["dir"]) / "out.mp4"
+
+                def _iter3():
+                    with open(out_path, "rb") as f:
+                        while True:
+                            chunk = f.read(1024 * 1024)
+                            if not chunk:
+                                break
+                            yield chunk
+
+                resp = Response(_iter3(), mimetype="video/mp4")
+                try:
+                    resp.headers["Content-Length"] = str(out_path.stat().st_size)
+                except Exception:
+                    pass
+                resp.headers["Connection"] = "close"
+                return resp
             # Fallthrough to attempt finalize if still not done
 
         sdir: Path = meta["dir"]
@@ -299,16 +347,25 @@ def finalize():
                 meta["finalizing"] = False
                 return jsonify({"error": "ffmpeg failed"}), 500
 
-            # Mark finalized and return the file as binary; keep session for idempotency
+            # Mark finalized and return the file as binary (streamed); keep session for idempotency
             meta["finalized"] = True
-            # Optional: include helpful headers (frames, duration)
-            resp = send_file(out_mp4, mimetype="video/mp4")
+
+            def _iter_final():
+                with open(out_mp4, "rb") as f:
+                    while True:
+                        chunk = f.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        yield chunk
+
+            resp = Response(_iter_final(), mimetype="video/mp4")
             try:
-                # Attach metadata as headers (non-critical)
+                resp.headers["Content-Length"] = str(out_mp4.stat().st_size)
                 resp.headers["X-Frames"] = str(frames)
                 resp.headers["X-Duration-Seconds"] = str(round(frames / float(fps), 3))
             except Exception:
                 pass
+            resp.headers["Connection"] = "close"
             return resp
         except Exception as e:
             app.logger.exception("finalize failed for session %s: %s", sid, e)
