@@ -236,6 +236,7 @@ def _encode_remote(anim, out_path: str, fps: int) -> bool:
                             turbo = None
 
                         q = raw_q
+                        enc_i = 0
                         while True:
                             item = q.get()
                             if item is None:
@@ -243,7 +244,11 @@ def _encode_remote(anim, out_path: str, fps: int) -> bool:
                                 q.task_done()
                                 break
 
-                            idx, arr = item  # <— unpack frame index
+                            # Support ndarray or (idx, ndarray)
+                            if isinstance(item, tuple) and len(item) >= 2:
+                                idx, arr = item
+                            else:
+                                arr = item
                             try:
                                 if turbo is not None:
                                     t0 = time.perf_counter()
@@ -269,10 +274,10 @@ def _encode_remote(anim, out_path: str, fps: int) -> bool:
                                     jpeg_bytes = out.getvalue()
                                     t_jpeg = time.perf_counter() - t0
 
-                                # your requested log style
-                                if (idx % 100) == 0:
+                                enc_i += 1
+                                if (enc_i % 100) == 0:
                                     logger.info(
-                                        "client: jpeg %.3f s (frame=%d)", t_jpeg, idx
+                                        "client: jpeg %.3f s (frame=%d)", t_jpeg, enc_i
                                     )
 
                                 jpg_q.put(base64.b64encode(jpeg_bytes).decode("utf-8"))
