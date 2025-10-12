@@ -206,6 +206,7 @@ def encode_animation_via_job(
             if fig is None or total_frames is None:
                 raise RuntimeError("Invalid animation object")
             count = 0
+            t0 = time.monotonic()
             for i in range(total_frames):
                 anim._draw_next_frame(i, blit=False)
                 buf = io.BytesIO()
@@ -213,6 +214,21 @@ def encode_animation_via_job(
                 b = buf.getvalue()
                 tmp.write(b)
                 count += 1
+                # progress logs every 100 frames (and at end)
+                if (i + 1) % 100 == 0 or (i + 1) == total_frames:
+                    elapsed = time.monotonic() - t0
+                    fps_est = (i + 1) / elapsed if elapsed > 0 else 0.0
+                    remaining = total_frames - (i + 1)
+                    eta = remaining / fps_est if fps_est > 0 else -1
+                    logger.info(
+                        "job: bundle progress %s/%s (%.1f%%) elapsed=%.2fs est_fps=%.1f eta=%.1fs",
+                        i + 1,
+                        total_frames,
+                        ((i + 1) / total_frames) * 100.0,
+                        elapsed,
+                        fps_est,
+                        eta,
+                    )
 
         size_bytes = os.path.getsize(tmp_png_path) if tmp_png_path else 0
         logger.info(
