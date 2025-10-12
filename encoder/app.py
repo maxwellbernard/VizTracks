@@ -4,6 +4,7 @@ import os
 import time
 from typing import List
 
+import requests
 from flask import Flask, jsonify, request
 
 app = Flask(__name__)
@@ -54,6 +55,16 @@ def get_ffmpeg_args(fps: int) -> list[str]:
         "0",
         "-an",
     ]
+
+
+def supabase_client():
+    from supabase import create_client
+
+    url = os.getenv("SUPABASE_URL")
+    key = os.getenv("SUPABASE_KEY")
+    if not url or not key:
+        raise RuntimeError("SUPABASE_URL/KEY not configured")
+    return create_client(url, key)
 
 
 @app.get("/")
@@ -303,6 +314,103 @@ def encode_pipe():
             os.remove(in_path)
         except Exception:
             pass
+
+
+@app.post("/encode_job")
+def encode_job():
+    """Job-style encode to avoid long-lived upload sockets.
+
+    Body JSON:
+      - input_url: Supabase public (or signed) URL to concatenated PNGs
+      - fps: int
+      - output_bucket: Supabase Storage bucket to upload MP4
+      - output_path: Path within bucket for the MP4
+
+    Returns: { url: public_url }
+    """
+    try:
+        if not nvenc_ready_cached():
+            return jsonify({"error": "starting"}), 503
+        data = request.get_json(force=True)
+        input_url = data.get("input_url")
+        output_bucket = data.get("output_bucket")
+        output_path = data.get("output_path")
+        fps = int(data.get("fps", 28))
+        if not input_url or not output_bucket or not output_path:
+            return jsonify({"error": "missing required fields"}), 400
+
+        # Download source into a temp file
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".pngpipe", delete=False) as tmp_in:
+            in_path = tmp_in.name
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_out:
+            out_path = tmp_out.name
+
+        r = requests.get(input_url, stream=True, timeout=(10, 1200))
+        r.raise_for_status()
+        total = 0
+        with open(in_path, "wb") as w:
+            for chunk in r.iter_content(chunk_size=1024 * 1024):
+                if not chunk:
+                    break
+                total += len(chunk)
+                w.write(chunk)
+        app.logger.info(f"downloaded source {total} bytes from {input_url}")
+
+        # Run ffmpeg
+        import subprocess
+
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "image2pipe",
+            "-vcodec",
+            "png",
+            "-framerate",
+            str(fps),
+            "-i",
+            "-",
+            *get_ffmpeg_args(fps),
+            out_path,
+        ]
+        app.logger.info(f"Starting ffmpeg (job): {' '.join(cmd)}")
+        proc = subprocess.Popen(
+            cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+        with open(in_path, "rb") as r2:
+            while True:
+                buf = r2.read(1024 * 1024)
+                if not buf:
+                    break
+                proc.stdin.write(buf)
+        proc.stdin.close()
+        _stdout, stderr = proc.communicate(timeout=1200)
+        if proc.returncode != 0:
+            err_txt = stderr.decode("utf-8", errors="ignore") if stderr else ""
+            app.logger.error("ffmpeg failed (job): %s", err_txt)
+            return jsonify({"error": "ffmpeg failed", "detail": err_txt}), 500
+
+        # Upload to Supabase Storage
+        sb = supabase_client()
+        with open(out_path, "rb") as f:
+            data = f.read()
+        res = sb.storage.from_(output_bucket).upload(
+            output_path,
+            data,
+            {
+                "content-type": "video/mp4",
+                "upsert": True,
+            },
+        )
+        if getattr(res, "error", None):
+            return jsonify({"error": str(res.error)}), 500
+        public_url = sb.storage.from_(output_bucket).get_public_url(output_path)
+        return jsonify({"url": public_url}), 200
+    except Exception as e:
+        app.logger.exception("/encode_job error: %s", e)
+        return jsonify({"error": str(e)}), 500
 
 
 if __name__ == "__main__":
