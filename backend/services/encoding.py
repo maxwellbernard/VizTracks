@@ -14,7 +14,7 @@ import requests
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 from PIL import Image
 from requests.adapters import HTTPAdapter, Retry
-from turbojpeg import TJPF_RGB, TurboJPEG
+from turbojpeg import TJFLAG_FASTDCT, TJPF_RGB, TurboJPEG
 
 from backend.core.config import ENCODER_URL
 
@@ -80,7 +80,7 @@ def _iter_frames_jpeg(anim, facecolor: str = "#F0F0F0") -> Iterator[bytes]:
                     pixel_format=TJPF_RGB,
                     quality=jpeg_quality,
                     jpeg_subsample=2,
-                    flags=0,
+                    flags=TJFLAG_FASTDCT,
                 )
                 return jpeg_bytes
             else:
