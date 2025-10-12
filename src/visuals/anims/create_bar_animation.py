@@ -507,6 +507,13 @@ def create_bar_animation(
     ax.xaxis.set_label_coords(-0.95, -0.05)
     setup_bar_plot_style(ax)
 
+    # Compute a fixed global x-limit for blitting (no autoscale per frame)
+    try:
+        global_max = max(max(d["widths"]) for d in precomputed_data.values()) or 1
+    except Exception:
+        global_max = 1
+    ax.set_xlim(0, global_max * 1.15)
+
     top_gap = 0.3
     bottom_gap = 0.2
 
@@ -693,7 +700,33 @@ def create_bar_animation(
         """Quadratic ease-in-out function to handle smooth transitions."""
         return t * t * (3 - 2 * t)
 
-    def animate(frame) -> None:
+    # Pre-build a flat list of all artists for blitting convenience
+    all_artists = (
+        list(bars)
+        + text_objects
+        + label_objects
+        + artist_label_objects
+        + image_annotations
+        + [year_text, month_text]
+    )
+
+    def _init_blit():
+        # Hide everything initially for blitting baseline
+        for bar in bars:
+            bar.set_visible(False)
+        for t in text_objects:
+            t.set_visible(False)
+        for t in label_objects:
+            t.set_visible(False)
+        for t in artist_label_objects:
+            t.set_visible(False)
+        for ab in image_annotations:
+            ab.set_visible(False)
+        year_text.set_text("")
+        month_text.set_text("")
+        return all_artists
+
+    def animate(frame):
         """Update the bar chart for each frame."""
         nonlocal anim_state
         main_frame = frame // interp_steps
@@ -802,15 +835,18 @@ def create_bar_animation(
             interp_positions = [-1] * top_n
             active_bars = [False] * top_n
 
+        changed = []
         for i, bar in enumerate(bars):
             if active_bars[i]:
                 bar.set_width(display_widths[i])
                 bar.set_y(interp_positions[i] - bar_height / 2)
                 bar.set_visible(True)
+                changed.append(bar)
             else:
                 bar.set_width(0)
                 bar.set_y(-1)  # Move off-screen
                 bar.set_visible(False)  # Hide completely
+                changed.append(bar)
 
         max_value = max(display_widths) if display_widths else 1
         offset = max(0.01, max_value * 0.03)
@@ -846,11 +882,20 @@ def create_bar_animation(
                 artist_label_objects[i].set_visible(False)
                 image_annotations[i].set_visible(False)
                 anim_state.last_img_obj[i] = None  # Reset last image
+                changed.extend(
+                    [
+                        text_objects[i],
+                        label_objects[i],
+                        artist_label_objects[i],
+                        image_annotations[i],
+                    ]
+                )
             elif has_data:  # Only show elements for bars with data
                 text_objects[i].set_position((text_x + offset, bar_center_y))
                 text_objects[i].set_text(f"{interp_widths[i]:,.0f}")
                 text_objects[i].set_fontsize(24)
                 text_objects[i].set_visible(True)
+                changed.append(text_objects[i])
 
                 # Update main label text with proper formatting
                 if i < len(labels) and labels[i]:
@@ -858,8 +903,10 @@ def create_bar_animation(
                     label_objects[i].set_text(labels[i])
                     label_objects[i].set_fontsize(label_fontsize)
                     label_objects[i].set_visible(True)
+                    changed.append(label_objects[i])
                 else:
                     label_objects[i].set_visible(False)
+                    changed.append(label_objects[i])
 
                 if selected_attribute in ["track_name", "album_name"]:
                     if i < len(artist_names) and artist_names[i]:
@@ -889,10 +936,13 @@ def create_bar_animation(
                         artist_label_objects[i].set_text(artist_wrapped)
                         artist_label_objects[i].set_fontsize(label_fontsize - 2)
                         artist_label_objects[i].set_visible(True)
+                        changed.append(artist_label_objects[i])
                     else:
                         artist_label_objects[i].set_visible(False)
+                        changed.append(artist_label_objects[i])
                 else:
                     artist_label_objects[i].set_visible(False)
+                    changed.append(artist_label_objects[i])
 
                 cache_key = f"{name}_top_n_{top_n}"
                 if selected_attribute == "track_name" and i < len(names):
@@ -921,17 +971,27 @@ def create_bar_animation(
                         anim_state.last_img_obj[i] = img_obj
                     image_annotations[i].xy = (text_x, bar_center_y)
                     image_annotations[i].set_visible(True)
+                    changed.append(image_annotations[i])
                     if img_data["color"]:
                         bars[i].set_facecolor(np.array(img_data["color"]) / 255)
                 else:
                     image_annotations[i].set_visible(False)
                     anim_state.last_img_obj[i] = None
+                    changed.append(image_annotations[i])
             else:
                 text_objects[i].set_visible(False)
                 label_objects[i].set_visible(False)
                 artist_label_objects[i].set_visible(False)
                 image_annotations[i].set_visible(False)
                 anim_state.last_img_obj[i] = None
+                changed.extend(
+                    [
+                        text_objects[i],
+                        label_objects[i],
+                        artist_label_objects[i],
+                        image_annotations[i],
+                    ]
+                )
 
         # update the state for the next frame
         if sub_step == interp_steps - 1:
@@ -942,14 +1002,15 @@ def create_bar_animation(
         else:
             anim_state.prev_interp_positions = interp_positions[:]
 
-        ax.set_yticks([])
-        ax.set_xlim(0, max(display_widths) * 1.1)
-
+        # Axes are static for blitting; avoid per-frame ticks/limits
         # update year and month text
         year_text.set_text(f"{current_time.year}")
         month_text.set_text(f"{current_time.strftime('%B')}")
-        # t_text = time.time()
-        # print(f"[TIMING] frame={frame} total={t_text - t_start:.4f}s")
+        changed.extend([year_text, month_text])
+        return changed
+
+    # t_text = time.time()
+    # print(f"[TIMING] frame={frame} total={t_text - t_start:.4f}s")
 
     t7 = time.time()
     print(f"Time for animation setup: {t7 - t6:.2f} seconds")
@@ -957,6 +1018,8 @@ def create_bar_animation(
         fig,
         animate,
         frames=total_frames,
+        init_func=_init_blit,
+        blit=True,
         interval=1,
         repeat=False,
     )
