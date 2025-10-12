@@ -166,15 +166,27 @@ def append():
     frames = data.get("frames") or []
 
     if not sid or sid not in SESSIONS:
+        app.logger.warning("append: invalid session_id=%s", sid)
         return jsonify({"error": "invalid session_id"}), 400
     if not isinstance(frames, list) or not frames:
+        app.logger.warning("append: no frames provided session=%s", sid)
         return jsonify({"error": "no frames provided"}), 400
+    if len(frames) > 600:
+        app.logger.warning("append: too many frames in one batch: %s", len(frames))
+        return jsonify({"error": "too many frames in one batch"}), 413
 
     meta = SESSIONS[sid]
     sdir: Path = meta["dir"]
     total = meta["count"]
 
     if total + len(frames) > MAX_FRAMES_PER_SESSION:
+        app.logger.warning(
+            "append: frame limit exceeded session=%s total=%d incoming=%d limit=%d",
+            sid,
+            total,
+            len(frames),
+            MAX_FRAMES_PER_SESSION,
+        )
         return jsonify({"error": "frame limit exceeded"}), 413
 
     added = 0
@@ -186,10 +198,16 @@ def append():
                 f.write(base64.b64decode(b64jpg))
             added += 1
         meta["count"] = total
-        app.logger.debug("session %s appended %d (total=%d)", sid, added, total)
+        app.logger.info(
+            "append: session=%s added=%d batch=%d total=%d",
+            sid,
+            added,
+            len(frames),
+            total,
+        )
         return jsonify({"ok": True, "added": added, "total": total})
     except Exception as e:
-        app.logger.exception("append failed for session %s: %s", sid, e)
+        app.logger.exception("append: failed session=%s err=%s", sid, e)
         return jsonify({"error": "append failed"}), 500
 
 
@@ -218,7 +236,6 @@ def finalize():
 
     cmd = [
         "ffmpeg",
-        "-hide_banner",
         "-loglevel",
         "warning",
         "-y",
