@@ -82,6 +82,7 @@ def encode_animation_remote(anim, out_path: str, fps: int) -> bool:
         return False
 
     base = ENCODER_URL.rstrip("/")
+    tmp_path: str | None = None
     try:
         if not wait_for_ready(base):
             print("[WARN] Encoder health did not become ready before deadline")
@@ -89,9 +90,7 @@ def encode_animation_remote(anim, out_path: str, fps: int) -> bool:
         time.sleep(5)
 
         url = base + f"/encode_pipe?fps={int(fps)}"
-        headers = {
-            "Content-Type": "application/octet-stream",
-        }
+        headers: dict[str, str] = {"Content-Type": "application/octet-stream"}
 
         with tempfile.NamedTemporaryFile(delete=False) as tmp:
             tmp_path = tmp.name
@@ -105,20 +104,17 @@ def encode_animation_remote(anim, out_path: str, fps: int) -> bool:
                 fig.savefig(buf, format="png", facecolor="#F0F0F0", dpi=fig.dpi)
                 tmp.write(buf.getvalue())
             size = tmp.tell()
-        # Force Content-Length and hint 100-continue to avoid proxy replay of large bodies
+
         headers["Content-Length"] = str(size)
-        headers["Expect"] = "100-continue"
+        headers["Connection"] = "keep-alive"
+        headers["Accept-Encoding"] = "identity"
 
         def do_post_file():
             with open(tmp_path, "rb") as f:
-                return requests.post(
-                    url,
-                    data=f,
-                    headers=headers,
-                    timeout=1200,
-                )
+                return requests.post(url, data=f, headers=headers, timeout=1200)
 
         attempts = 3
+        resp = None
         last_exc: Exception | None = None
         for attempt in range(1, attempts + 1):
             try:
@@ -138,11 +134,11 @@ def encode_animation_remote(anim, out_path: str, fps: int) -> bool:
                 if not wait_for_ready(base, deadline_sec=30):
                     print("[WARN] Encoder not ready during retry window")
                 time.sleep(5)
-        if last_exc:
 
+        if last_exc:
             if (
                 isinstance(last_exc, req_exc.HTTPError)
-                and last_exc.response is not None
+                and getattr(last_exc, "response", None) is not None
             ):
                 try:
                     detail = last_exc.response.text
@@ -155,6 +151,7 @@ def encode_animation_remote(anim, out_path: str, fps: int) -> bool:
                 print(f"[WARN] Remote encoder error: {last_exc}")
             return False
 
+        assert resp is not None
         data = resp.json()
         video_b64 = data.get("video")
         if not video_b64:
@@ -167,7 +164,7 @@ def encode_animation_remote(anim, out_path: str, fps: int) -> bool:
         return False
     finally:
         try:
-            if "tmp_path" in locals() and os.path.exists(tmp_path):
+            if tmp_path and os.path.exists(tmp_path):
                 os.remove(tmp_path)
         except Exception:
             pass
