@@ -12,6 +12,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import requests
+from matplotlib import colors as mcolors
 from requests.adapters import HTTPAdapter, Retry
 
 from backend.core.config import ENCODER_URL
@@ -72,32 +73,37 @@ def _make_session() -> requests.Session:
 
 
 def _iter_frames_rgb(
-    anim, *, face: str = "#F0F0F0"
+    anim, *, face: Optional[str] = None
 ) -> Iterator[Tuple[bytes, int, int]]:
     """
     Yield raw RGB bytes (H x W x 3) from Agg without savefig()/Pillow round-trips.
     Returns (rgb_bytes, width, height).
     """
     fig: plt.Figure = anim._fig
-    fig.set_size_inches(TARGET_W / TARGET_DPI, TARGET_H / TARGET_DPI)
-    fig.set_dpi(TARGET_DPI)
-    fig.patch.set_facecolor(face)
-    fig.patch.set_alpha(1.0)
-    for ax in fig.axes:
-        ax.patch.set_alpha(1.0)
 
     if hasattr(anim, "_init_draw"):
         anim._init_draw()
 
     canvas = fig.canvas
 
+    if face is not None:
+        try:
+            bg_rgba = mcolors.to_rgba(face)
+        except Exception:
+            bg_rgba = fig.get_facecolor()
+    else:
+        bg_rgba = fig.get_facecolor()
+    bg = np.array(bg_rgba[:3], dtype=np.float32).reshape(1, 1, 3)
+
     def grab() -> Tuple[bytes, int, int]:
         canvas.draw()
         w, h = canvas.get_width_height()
-
-        buf = np.frombuffer(canvas.buffer_rgba(), dtype=np.uint8).reshape((h, w, 4))
-        rgb = buf[:, :, :3].copy(order="C")
-        return rgb.tobytes(), w, h
+        arr = np.frombuffer(canvas.buffer_rgba(), dtype=np.uint8).reshape((h, w, 4))
+        rgb = arr[:, :, :3].astype(np.float32) / 255.0
+        a = arr[:, :, 3:4].astype(np.float32) / 255.0
+        comp = rgb * a + bg * (1.0 - a)
+        out = (comp * 255.0 + 0.5).astype(np.uint8)
+        return out.tobytes(), w, h
 
     if hasattr(anim, "new_frame_seq"):
         for framedata in anim.new_frame_seq():
@@ -242,7 +248,7 @@ def encode_animation(anim, out_path: str, fps: int) -> None:
         )
         worker.start()
 
-        for idx, (rgb, w, h) in enumerate(_iter_frames_rgb(anim, face="#F0F0F0")):
+        for idx, (rgb, w, h) in enumerate(_iter_frames_rgb(anim)):
             if idx % 200 == 0:
                 log.info("client: prepared frame %d (batching)", idx)
             q.put((rgb, w, h))
