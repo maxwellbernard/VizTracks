@@ -522,6 +522,7 @@ def create_bar_animation(
     try:
         for b in bars:
             b.set_zorder(5)
+            b.set_animated(True)
     except Exception:
         pass
     ax.set_yticks([])
@@ -577,6 +578,10 @@ def create_bar_animation(
             visible=False,
         )
         text_objects.append(text_obj)
+        try:
+            text_obj.set_animated(True)
+        except Exception:
+            pass
 
         # y-axis labels
         label_obj = ax.text(
@@ -592,6 +597,7 @@ def create_bar_animation(
         label_objects.append(label_obj)
         try:
             label_obj.set_zorder(9)
+            label_obj.set_animated(True)
         except Exception:
             pass
 
@@ -610,6 +616,7 @@ def create_bar_animation(
         artist_label_objects.append(artist_obj)
         try:
             artist_obj.set_zorder(9)
+            artist_obj.set_animated(True)
         except Exception:
             pass
 
@@ -635,10 +642,40 @@ def create_bar_animation(
         try:
             ab.set_zorder(10)
             ab.set_clip_on(False)
+            ab.set_animated(True)
         except Exception:
             pass
         image_annotations.append(ab)
         offset_images.append(offset_img)
+
+    # Compute a minimum x (in data units) so the avatar placed with xybox offset
+    # never crosses the y-axis (x=0). Convert the left offset in points/pixels
+    # plus half image width to a data-space clearance.
+    def _compute_min_image_anchor_x() -> float:
+        try:
+            # Image width in points for zoom=1
+            img_w_pts = (target_size * 72.0 / float(fig.dpi)) * 1.0
+            # xybox is in points; left shift is negative
+            left_offset_pts = float(xybox[0]) - (img_w_pts / 2.0)
+            # Convert points to pixels
+            left_offset_px = left_offset_pts * (float(fig.dpi) / 72.0)
+            # Display x position for data x=0
+            x0_disp = ax.transData.transform((0.0, 0.0))[0]
+            # We need the bar/image anchor at a display x such that the image's
+            # left edge is >= the x=0 spine in display coords
+            required_disp_x = x0_disp - left_offset_px
+            # Add a tiny margin (4pt) so it doesn't visually touch the spine
+            margin_px = 4.0 * (float(fig.dpi) / 72.0)
+            required_disp_x += margin_px
+            # Convert back to data units
+            min_data_x = ax.transData.inverted().transform((required_disp_x, 0.0))[0]
+            return max(0.0, float(min_data_x))
+        except Exception:
+            # Fallback: 5% of the x range
+            xmin, xmax = ax.get_xlim()
+            return max(0.0, xmin + 0.05 * (xmax - xmin))
+
+    min_image_anchor_x = _compute_min_image_anchor_x()
 
     # Add year and month text boxes
     year_text = ax.text(
@@ -664,6 +701,8 @@ def create_bar_animation(
     try:
         year_text.set_zorder(9)
         month_text.set_zorder(9)
+        year_text.set_animated(True)
+        month_text.set_animated(True)
     except Exception:
         pass
     # x-axis label for clarity
@@ -813,8 +852,7 @@ def create_bar_animation(
 
         max_width = max(interp_widths) if interp_widths else 1
 
-        # this section ensures that the minimum bar width is applied
-        # and the image does not go below 0 on the x-axis
+        # Ensure a minimum bar width so the avatar is fully to the right of x=0
         min_bar_width_mapping = {
             1: 0.30,
             2: 0.54,
@@ -835,10 +873,12 @@ def create_bar_animation(
 
         for i, width in enumerate(interp_widths):
             name = names[i] if i < len(names) else ""
-            has_data = width > 0 and name
+            has_data = (width > 0) and bool(name)
 
             if has_data:
-                display_widths.append(max(width, min_bar_width))
+                # Clamp width by both the global min bar width and the
+                # minimum image anchor x to keep the avatar on-screen.
+                display_widths.append(max(width, min_bar_width, min_image_anchor_x))
                 active_bars.append(True)
             else:
                 display_widths.append(0)

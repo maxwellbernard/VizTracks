@@ -166,19 +166,14 @@ def _iter_frames_rgb(anim, facecolor: str = "#F0F0F0") -> Iterator[np.ndarray]:
     except Exception:
         use_blit = False
 
-    def grab_rgb_full() -> np.ndarray:
-        t0 = time.perf_counter()
-        canvas.draw()
-        t_draw = time.perf_counter() - t0
-        if frame_idx % 100 == 0:
-            logger.info("perf: draw %.4f s (frame=%d)", t_draw, frame_idx)
-        w, h = canvas.get_width_height()
-        buf = np.frombuffer(canvas.buffer_rgba(), dtype=np.uint8).reshape(h, w, 4)
-        return buf[:, :, :3].copy(order="C")
+    # Enforce blit-only policy
+    if not use_blit or blit_bg is None or main_ax is None:
+        raise RuntimeError("Blit background unavailable; refusing full draw per policy")
+
+    # No full-draw fallback by request
 
     def grab_rgb_blit(artists: list) -> np.ndarray:
-        if not use_blit or blit_bg is None or main_ax is None:
-            return grab_rgb_full()
+        # Preconditions guaranteed above
         try:
             canvas.restore_region(blit_bg)
             for a in artists:
@@ -188,7 +183,7 @@ def _iter_frames_rgb(anim, facecolor: str = "#F0F0F0") -> Iterator[np.ndarray]:
                     pass
             canvas.blit(main_ax.bbox)
         except Exception:
-            return grab_rgb_full()
+            raise
         w, h = canvas.get_width_height()
         buf = np.frombuffer(canvas.buffer_rgba(), dtype=np.uint8).reshape(h, w, 4)
         return buf[:, :, :3].copy(order="C")
@@ -196,11 +191,10 @@ def _iter_frames_rgb(anim, facecolor: str = "#F0F0F0") -> Iterator[np.ndarray]:
     if hasattr(anim, "new_frame_seq"):
         for framedata in anim.new_frame_seq():
             artists = anim._draw_frame(framedata)
-            # Matplotlib returns list of artists when blit=True paths are used
-            if isinstance(artists, (list, tuple)) and artists:
-                rgb = grab_rgb_blit(list(artists))
-            else:
-                rgb = grab_rgb_full()
+            # Matplotlib must return artists when blitting
+            if not isinstance(artists, (list, tuple)):
+                raise RuntimeError("Animate did not return artists; blit required")
+            rgb = grab_rgb_blit(list(artists))
             if frame_idx % 200 == 0:
                 logger.info("client: prepared frame %s (rgb)", frame_idx)
             frame_idx += 1
@@ -211,10 +205,9 @@ def _iter_frames_rgb(anim, facecolor: str = "#F0F0F0") -> Iterator[np.ndarray]:
                 artists = anim._draw_next_frame(frame_idx, blit=True)
             except StopIteration:
                 break
-            if isinstance(artists, (list, tuple)) and artists:
-                rgb = grab_rgb_blit(list(artists))
-            else:
-                rgb = grab_rgb_full()
+            if not isinstance(artists, (list, tuple)):
+                raise RuntimeError("Animate did not return artists; blit required")
+            rgb = grab_rgb_blit(list(artists))
             if frame_idx % 200 == 0:
                 logger.info("client: prepared frame %s (rgb)", frame_idx)
             frame_idx += 1
