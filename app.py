@@ -32,13 +32,8 @@ import streamlit as st
 
 from src.data.normalize_inputs import normalize_inputs
 from src.services.supabase_client import supabase
-from src.visuals.anims.create_bar_animation import (
-    days,
-    dpi,
-    figsize,
-    interp_steps,
-    period,
-)
+from src.visuals.anims.create_bar_animation import (days, dpi, figsize,
+                                                    interp_steps, period)
 
 st.set_page_config(
     page_title="Viztrack Studio",
@@ -90,8 +85,7 @@ st.markdown(
     
     /* Content width limit */
     .block-container {
-        /* Allow wide content (e.g., 1920px video) */
-        max-width: 2100px !important;
+        max-width: 1300px !important;
         margin-left: auto !important;
         margin-right: auto !important;
     }
@@ -927,25 +921,7 @@ if st.session_state.get("temp_file_path_bar_anim"):
     )
     col1, col2, col3 = st.columns([0.55, 0.44, 0.01])
     with col1:
-        try:
-            with open(st.session_state.temp_file_path_bar_anim, "rb") as f:
-                _vid_bytes = f.read()
-            _vid_b64 = base64.b64encode(_vid_bytes).decode("utf-8")
-            st.components.v1.html(
-                f"""
-                <div style="width:1920px;height:1080px;margin:0 auto;">
-                  <video width="1920" height="1080"
-                         style="display:block;width:1920px;height:1080px;object-fit:contain;"
-                         controls
-                         src="data:video/mp4;base64,{_vid_b64}"></video>
-                </div>
-                """,
-                height=1100,
-                scrolling=False,
-            )
-        except Exception:
-            # Fallback to st.video if inline render fails
-            st.video(st.session_state.temp_file_path_bar_anim)
+        st.video(st.session_state.temp_file_path_bar_anim)
 
     with col2:
         col1, col2, col3 = st.columns([0.005, 0.99, 0.005])

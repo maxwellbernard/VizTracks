@@ -513,16 +513,50 @@ def encode_raw():
             os.getenv("FFMPEG_SCALER"),
             scaler_choice,
         )
+        # Compute aspect-preserving fit inside target, then pad to exact target
+        try:
+            s = min(tgt_w / float(w), tgt_h / float(h))
+        except Exception:
+            s = 1.0
+        fit_w = max(2, int(w * s))
+        fit_h = max(2, int(h * s))
+        if fit_w % 2:
+            fit_w -= 1
+        if fit_h % 2:
+            fit_h -= 1
+        fit_w = min(fit_w, tgt_w - (tgt_w % 2))
+        fit_h = min(fit_h, tgt_h - (tgt_h % 2))
+        app.logger.info(
+            "encode_raw: fit %dx%d within %dx%d (input %dx%d)",
+            fit_w,
+            fit_h,
+            tgt_w,
+            tgt_h,
+            w,
+            h,
+        )
         if scaler_choice == "npp":
-            # For NPP, ensure we upload NV12 to the GPU; enforce 1:1 SAR for correct display size
-            vf = f"format=nv12,hwupload_cuda,scale_npp={tgt_w}:{tgt_h}:interp_algo=lanczos:format=nv12,setsar=1"
+            vf = (
+                f"format=nv12,hwupload_cuda,"
+                f"scale_npp={fit_w}:{fit_h}:interp_algo=lanczos:format=nv12,"
+                f"hwdownload,format=nv12,"
+                f"pad={tgt_w}:{tgt_h}:(ow-iw)/2:(oh-ih)/2,setsar=1"
+            )
             cmd += ["-vf", vf]
         elif scaler_choice == "cuda":
-            # With CUDA scaler too, convert to NV12 and enforce 1:1 SAR
-            vf = f"format=nv12,hwupload_cuda,scale_cuda={tgt_w}:{tgt_h}:format=nv12,setsar=1"
+            vf = (
+                f"format=nv12,hwupload_cuda,"
+                f"scale_cuda={fit_w}:{fit_h}:format=nv12,"
+                f"hwdownload,format=nv12,"
+                f"pad={tgt_w}:{tgt_h}:(ow-iw)/2:(oh-ih)/2,setsar=1"
+            )
             cmd += ["-vf", vf]
         else:
-            cmd += ["-vf", f"scale={tgt_w}:{tgt_h}:flags=lanczos"]
+            vf = (
+                f"scale={fit_w}:{fit_h}:flags=lanczos,"
+                f"pad={tgt_w}:{tgt_h}:(ow-iw)/2:(oh-ih)/2,setsar=1"
+            )
+            cmd += ["-vf", vf]
 
     enc_args = get_ffmpeg_args(fps)
     # If using GPU scaler, avoid forcing SW pix_fmt yuv420p which inserts auto_scale
