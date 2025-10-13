@@ -5,14 +5,16 @@ import os
 import queue
 import threading
 import time
-from typing import Iterator, Optional
+from typing import Iterator
 from typing import Iterator as TypingIterator
+from typing import Optional
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import requests
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
+from matplotlib.transforms import Bbox
 from PIL import Image
 from requests.adapters import HTTPAdapter, Retry
 from turbojpeg import TJFLAG_FASTDCT, TJPF_RGB, TurboJPEG
@@ -25,6 +27,21 @@ logger = logging.getLogger(__name__)
 def _iter_frames_jpeg(anim, facecolor: str = "#F0F0F0") -> Iterator[bytes]:
     """Yield JPEG bytes frame-by-frame without materializing the whole animation."""
     fig = anim._fig
+
+    # One-time resolution debug
+    try:
+        fw, fh = fig.get_figwidth(), fig.get_figheight()
+        pw, ph = int(round(fw * fig.dpi)), int(round(fh * fig.dpi))
+        logger.info(
+            "encoder: figure dpi=%s figsize=(%.2f,%.2f) pixels=%sx%s",
+            fig.dpi,
+            fw,
+            fh,
+            pw,
+            ph,
+        )
+    except Exception:
+        pass
 
     try:
         mpl.rcParams["text.antialiased"] = False
@@ -101,6 +118,12 @@ def _iter_frames_jpeg(anim, facecolor: str = "#F0F0F0") -> Iterator[bytes]:
                 return out.getvalue()
 
     frame_idx = 0
+    # Hint Matplotlib about frame count to stabilize internal state
+    try:
+        if getattr(anim, "save_count", None) is None:
+            setattr(anim, "save_count", getattr(anim, "_stop", frame_idx) or 0)
+    except Exception:
+        pass
     if hasattr(anim, "new_frame_seq"):
         for framedata in anim.new_frame_seq():
             anim._draw_frame(framedata)
@@ -123,13 +146,32 @@ def _iter_frames_jpeg(anim, facecolor: str = "#F0F0F0") -> Iterator[bytes]:
 
 
 def _iter_frames_rgb(anim, facecolor: str = "#F0F0F0") -> Iterator[np.ndarray]:
-    """Yield contiguous RGB numpy arrays using Agg renderer."""
+    """Yield contiguous RGB frames using Agg; try blitting for speed.
+
+    If the animation provides a blit-friendly update (artists with animated=True),
+    we cache the background once and only redraw changed artists per frame.
+    Falls back to full canvas.draw() if blitting isn't viable.
+    """
     fig = anim._fig
     try:
         mpl.rcParams["text.antialiased"] = False
         mpl.rcParams["patch.antialiased"] = False
         mpl.rcParams["lines.antialiased"] = False
         mpl.rcParams["agg.path.chunksize"] = 10000
+    except Exception:
+        pass
+    # One-time resolution debug
+    try:
+        fw, fh = fig.get_figwidth(), fig.get_figheight()
+        pw, ph = int(round(fw * fig.dpi)), int(round(fh * fig.dpi))
+        logger.info(
+            "encoder(rgb): figure dpi=%s figsize=(%.2f,%.2f) pixels=%sx%s",
+            fig.dpi,
+            fw,
+            fh,
+            pw,
+            ph,
+        )
     except Exception:
         pass
     try:
@@ -142,34 +184,119 @@ def _iter_frames_rgb(anim, facecolor: str = "#F0F0F0") -> Iterator[np.ndarray]:
 
     frame_idx = 0
 
-    def grab_rgb() -> np.ndarray:
-        t0 = time.perf_counter()
+    # Try to prepare blit background for the main axes if available
+    main_ax = None
+    try:
+        if hasattr(fig, "axes") and fig.axes:
+            main_ax = fig.axes[0]
+    except Exception:
+        main_ax = None
+
+    blit_bg = None
+    use_blit = False
+    try:
         canvas.draw()
-        t_draw = time.perf_counter() - t0
-        if frame_idx % 100 == 0:
-            logger.info("perf: draw %.4f s (frame=%d)", t_draw, frame_idx)
+        if main_ax is not None:
+            # Expand blit region slightly to the left so artists just outside x=0
+            # are safely restored (prevents ghosting when labels sit left of axis).
+            try:
+                extra_left_px = int(os.getenv("BLIT_MARGIN_LEFT", "80"))
+            except Exception:
+                extra_left_px = 80
+            ax_bbox = main_ax.bbox
+            expanded = Bbox.from_extents(
+                ax_bbox.x0 - extra_left_px, ax_bbox.y0, ax_bbox.x1, ax_bbox.y1
+            )
+            blit_bg = canvas.copy_from_bbox(expanded)
+            # Store for later blit
+            blit_area = expanded
+            use_blit = True
+            logger.info(
+                "perf: blit background cached (expanded left by %spx)", extra_left_px
+            )
+    except Exception:
+        use_blit = False
+
+    # Enforce blit-only policy
+    if not use_blit or blit_bg is None or main_ax is None:
+        raise RuntimeError("Blit background unavailable; refusing full draw per policy")
+
+    # No full-draw fallback by request
+
+    def grab_rgb_blit(artists: list) -> np.ndarray:
+        # Preconditions guaranteed above
+        try:
+            canvas.restore_region(blit_bg)
+            for a in artists:
+                try:
+                    main_ax.draw_artist(a)
+                except Exception:
+                    pass
+            try:
+                canvas.blit(blit_area)
+            except Exception:
+                canvas.blit(main_ax.bbox)
+        except Exception:
+            raise
         w, h = canvas.get_width_height()
         buf = np.frombuffer(canvas.buffer_rgba(), dtype=np.uint8).reshape(h, w, 4)
         return buf[:, :, :3].copy(order="C")
 
+    # Iterate deterministically over Matplotlib's frame sequence
     if hasattr(anim, "new_frame_seq"):
         for framedata in anim.new_frame_seq():
-            anim._draw_frame(framedata)
-            rgb = grab_rgb()
+            try:
+                anim._draw_frame(framedata)
+            except StopIteration:
+                break
+            artists = getattr(anim, "_drawn_artists", None)
+            if not isinstance(artists, (list, tuple)):
+                # Infer artists from animated=True flags
+                inferred = []
+                try:
+                    if main_ax is not None:
+                        inferred = [
+                            a
+                            for a in getattr(main_ax, "get_children", lambda: [])()
+                            if hasattr(a, "get_animated") and a.get_animated()
+                        ]
+                    if not inferred:
+                        inferred = [
+                            a
+                            for a in fig.findobj()
+                            if hasattr(a, "get_animated") and a.get_animated()
+                        ]
+                except Exception:
+                    inferred = []
+                if inferred:
+                    artists = inferred
+                    if frame_idx % 200 == 0:
+                        logger.info(
+                            "client: animate() returned no artists, using %d inferred animated artists",
+                            len(inferred),
+                        )
+                else:
+                    raise RuntimeError(
+                        "Animate did not return artists and no animated artists inferred; blit required"
+                    )
+            rgb = grab_rgb_blit(list(artists))
             if frame_idx % 200 == 0:
                 logger.info("client: prepared frame %s (rgb)", frame_idx)
             frame_idx += 1
             yield rgb
     else:
-        while True:
-            try:
-                anim._draw_next_frame(frame_idx, blit=True)
-            except StopIteration:
-                break
-            rgb = grab_rgb()
+        # Fallback: use total_frames if provided
+        total_frames = getattr(anim, "total_frames", None)
+        if total_frames is None:
+            raise RuntimeError("Animation missing frame sequence and total_frames")
+        for frame_idx in range(total_frames):
+            anim._draw_frame(frame_idx)
+            artists = getattr(anim, "_drawn_artists", None)
+            if not isinstance(artists, (list, tuple)):
+                raise RuntimeError("Animate did not return artists; blit required")
+            rgb = grab_rgb_blit(list(artists))
             if frame_idx % 200 == 0:
                 logger.info("client: prepared frame %s (rgb)", frame_idx)
-            frame_idx += 1
             yield rgb
 
 
@@ -469,7 +596,9 @@ def _encode_remote(anim, out_path: str, fps: int) -> bool:
         return False
 
 
-def _encode_raw(anim, out_path: str, fps: int) -> None:
+def _encode_raw(
+    anim, out_path: str, fps: int, target: Optional[tuple[int, int]] = None
+) -> None:
     """Stream raw RGB frames to the encoder's /encode_raw endpoint and save MP4."""
     if not ENCODER_URL:
         raise RuntimeError("ENCODER_URL not set; GPU encoder required")
@@ -504,6 +633,8 @@ def _encode_raw(anim, out_path: str, fps: int) -> None:
         raise RuntimeError("Frame must be HxWx3 uint8 array")
 
     h, w, _ = first.shape
+    # Log draw size (Agg canvas size in pixels)
+    logger.info("client: draw size %dx%d (figsize*dpi)", w, h)
 
     def body() -> TypingIterator[bytes]:
         # yield first then the rest
@@ -518,6 +649,30 @@ def _encode_raw(anim, out_path: str, fps: int) -> None:
             yield arr.tobytes()
             idx += 1
 
+    # Optional upscale target: prefer explicit target, else env OUTPUT_* if set
+    tgt_w = None
+    tgt_h = None
+    if target and len(target) == 2:
+        ow, oh = int(target[0]), int(target[1])
+        if ow > 0 and oh > 0 and (ow != w or oh != h):
+            if ow % 2 == 1:
+                ow += 1
+            if oh % 2 == 1:
+                oh += 1
+            tgt_w, tgt_h = ow, oh
+    else:
+        try:
+            ow = int(os.getenv("OUTPUT_WIDTH", "0"))
+            oh = int(os.getenv("OUTPUT_HEIGHT", "0"))
+            if ow > 0 and oh > 0 and (ow != w or oh != h):
+                if ow % 2 == 1:
+                    ow += 1
+                if oh % 2 == 1:
+                    oh += 1
+                tgt_w, tgt_h = ow, oh
+        except Exception:
+            tgt_w = tgt_h = None
+
     headers = {
         "Content-Type": "application/octet-stream",
         "X-Width": str(w),
@@ -527,6 +682,9 @@ def _encode_raw(anim, out_path: str, fps: int) -> None:
         "Expect": "100-continue",
         "Connection": "close",
     }
+    if tgt_w and tgt_h:
+        headers["X-Target-Width"] = str(tgt_w)
+        headers["X-Target-Height"] = str(tgt_h)
 
     url = f"{base}/encode_raw"
     logger.info(
@@ -540,6 +698,14 @@ def _encode_raw(anim, out_path: str, fps: int) -> None:
         url, data=body(), headers=headers, stream=True, timeout=1800
     ) as r:
         r.raise_for_status()
+        # Log encoded size if encoder provides it via headers
+        try:
+            enc_w = r.headers.get("X-Encoded-Width")
+            enc_h = r.headers.get("X-Encoded-Height")
+            if enc_w and enc_h:
+                logger.info("client: encoded size %sx%s (from encoder)", enc_w, enc_h)
+        except Exception:
+            pass
         total = 0
         with open(out_path, "wb") as f:
             for chunk in r.iter_content(chunk_size=1024 * 1024):
@@ -549,7 +715,9 @@ def _encode_raw(anim, out_path: str, fps: int) -> None:
         logger.info("client: raw encode ok bytes=%.2f MiB", total / (1024 * 1024))
 
 
-def encode_animation(anim, out_path: str, fps: int) -> None:
+def encode_animation(
+    anim, out_path: str, fps: int, target: Optional[tuple[int, int]] = None
+) -> None:
     """
     Remote GPU encoder only (no CPU fallback).
     Raises on failure.
@@ -558,7 +726,7 @@ def encode_animation(anim, out_path: str, fps: int) -> None:
     try:
         logger.info("client: encode_animation start fps=%s out=%s", fps, out_path)
         # Use raw streaming path by default
-        _encode_raw(anim, out_path, fps)
+        _encode_raw(anim, out_path, fps, target)
     finally:
         try:
             if fig is not None:

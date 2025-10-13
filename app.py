@@ -32,7 +32,8 @@ import streamlit as st
 
 from src.data.normalize_inputs import normalize_inputs
 from src.services.supabase_client import supabase
-from src.visuals.anims.create_bar_animation import days, dpi, figsize, interp_steps, period
+from src.visuals.anims.create_bar_animation import (days, dpi, figsize,
+                                                    interp_steps, period)
 
 st.set_page_config(
     page_title="Viztrack Studio",

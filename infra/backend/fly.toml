@@ -25,9 +25,10 @@ primary_region = 'arn'
   UPLOAD_FLUSH_SECS = "1.5"
   MIN_UPLOAD_BATCH = "12"
   JPEG_QUALITY = "60"
-  OUTPUT_WIDTH = "1280"
-  OUTPUT_HEIGHT = "720"
-  OUTPUT_DPI = "60"
   UPLOAD_QUEUE_MAX = "90"
   JPEG_SUBSAMPLE = "1"
   RENDERER = "agg"
+  # Draw-time cap to keep pixel count modest; encoder will upscale
+  RENDER_MAX_WIDTH = "0"
+  RENDER_MAX_HEIGHT = "1080"
+  FFMPEG_SCALER = "cpu"

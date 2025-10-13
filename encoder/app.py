@@ -20,6 +20,50 @@ app.config["USE_X_SENDFILE"] = False
 
 READY: Optional[bool] = None
 
+
+# Determine available scalers once
+def _detect_scalers() -> dict:
+    caps = {"scale_npp": False, "scale_cuda": False}
+    try:
+        out = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-filters"], capture_output=True, text=True
+        )
+        txt = out.stdout.lower()
+        caps["scale_npp"] = "scale_npp" in txt
+        caps["scale_cuda"] = "scale_cuda" in txt
+    except Exception:
+        pass
+    return caps
+
+
+DETECTED_SCALERS = _detect_scalers()
+app.logger.info("scalers detected: %s", DETECTED_SCALERS)
+
+
+def _select_scaler(env_pref: Optional[str]) -> str:
+    pref = (env_pref or "auto").lower()
+    if pref == "npp":
+        return (
+            "npp"
+            if DETECTED_SCALERS.get("scale_npp")
+            else ("cuda" if DETECTED_SCALERS.get("scale_cuda") else "cpu")
+        )
+    if pref == "cuda":
+        return (
+            "cuda"
+            if DETECTED_SCALERS.get("scale_cuda")
+            else ("npp" if DETECTED_SCALERS.get("scale_npp") else "cpu")
+        )
+    if pref == "cpu":
+        return "cpu"
+    # auto
+    if DETECTED_SCALERS.get("scale_npp"):
+        return "npp"
+    if DETECTED_SCALERS.get("scale_cuda"):
+        return "cuda"
+    return "cpu"
+
+
 # Session state: session_id -> {"dir": Path, "fps": int, "count": int, "created": float}
 SESSIONS: Dict[str, Dict] = {}
 
@@ -62,21 +106,93 @@ def nvenc_ready_cached() -> bool:
 
 
 def get_ffmpeg_args(fps: int) -> list[str]:
-    return [
+    """Build NVENC args with environment overrides for quality.
+
+    Env vars (all optional):
+      NVENC_PRESET:    p1..p7 (default p1)
+      NVENC_RC:        vbr | vbr_hq | cbr | cbr_hq | constqp (default vbr)
+      NVENC_CQ:        integer CQ (lower is higher quality, default 30)
+      NVENC_BITRATE:   target bitrate like 6M or 8000k (default 0 for cq-based VBR)
+      NVENC_LOOKAHEAD: integer frames (e.g., 20)
+      NVENC_SPATIAL_AQ: 1 to enable, 0 to disable (default 1)
+      NVENC_TEMPORAL_AQ: 1 to enable, 0 to disable (default 1)
+      NVENC_AQ_STRENGTH: 1..15 (default 8)
+      NVENC_BFRAMES:   number of B-frames (default 3)
+      NVENC_PROFILE:   baseline | main | high (default high)
+    """
+    preset = os.getenv("NVENC_PRESET", "p1")
+    rc = os.getenv("NVENC_RC", "vbr").lower()
+    cq = os.getenv("NVENC_CQ", "30")
+    bitrate = os.getenv("NVENC_BITRATE", "0")
+    lookahead = os.getenv("NVENC_LOOKAHEAD")
+    spatial_aq = os.getenv("NVENC_SPATIAL_AQ", "1")
+    temporal_aq = os.getenv("NVENC_TEMPORAL_AQ", "1")
+    aq_strength = os.getenv("NVENC_AQ_STRENGTH", "8")
+    bframes = os.getenv("NVENC_BFRAMES", "3")
+    profile = os.getenv("NVENC_PROFILE", "high")
+    multipass = os.getenv("NVENC_MULTIPASS", "").lower()  # "qres" | "fullres" | ""
+
+    # Sanitize deprecated *_hq RC with P1..P7 presets: map to modern equivalents
+    # vbr_hq -> vbr + multipass (if not set), cbr_hq -> cbr + multipass
+    if rc in ("vbr_hq", "cbr_hq"):
+        app.logger.info(
+            "NVENC_RC=%s is deprecated; mapping to modern mode with -multipass", rc
+        )
+        if rc == "vbr_hq":
+            rc = "vbr"
+        else:
+            rc = "cbr"
+        if multipass == "":
+            multipass = "fullres"
+
+    args: list[str] = [
         "-c:v",
         "h264_nvenc",
         "-preset",
-        "p1",
+        preset,
         "-rc",
-        "vbr",
+        rc,
         "-tune",
         "hq",
-        "-cq",
-        "30",
-        "-b:v",
-        "0",
+    ]
+
+    # Rate control specifics
+    if rc in ("vbr", "vbr_hq"):
+        # Default to CQ-based VBR if bitrate not provided or set to 0
+        if bitrate and bitrate not in ("0", "0k", "0M"):
+            args += ["-b:v", bitrate]
+        else:
+            args += ["-cq", cq, "-b:v", "0"]
+    elif rc in ("cbr", "cbr_hq"):
+        # Require a bitrate for CBR; fallback to 6M if missing
+        br = bitrate if bitrate and bitrate not in ("0", "0k", "0M") else "6M"
+        # Use a reasonable buffer
+        args += ["-b:v", br, "-maxrate", br, "-bufsize", "2*" + br]
+    elif rc == "constqp":
+        # Use -qp (or -cq) for constant QP; cq maps reasonably
+        args += ["-qp", cq]
+
+    # Quality/perceptual tweaks
+    try:
+        if int(bframes) >= 0:
+            args += ["-bf", str(int(bframes))]
+    except Exception:
+        pass
+    if lookahead and lookahead.isdigit():
+        args += ["-rc-lookahead", lookahead]
+    if spatial_aq in ("1", "true", "True"):
+        args += ["-spatial-aq", "1", "-aq-strength", aq_strength]
+    if temporal_aq in ("1", "true", "True"):
+        args += ["-temporal-aq", "1"]
+    if multipass in ("qres", "fullres"):
+        args += ["-multipass", multipass]
+
+    # Compatibility and container
+    args += [
         "-pix_fmt",
         "yuv420p",
+        "-profile:v",
+        profile,
         "-g",
         str(int(fps * 2)),
         "-movflags",
@@ -85,6 +201,7 @@ def get_ffmpeg_args(fps: int) -> list[str]:
         "0",
         "-an",
     ]
+    return args
 
 
 def _ensure_sessions_dir() -> Path:
@@ -398,6 +515,8 @@ def encode_raw():
         h = int(request.headers.get("X-Height", "0"))
         fps = int(request.headers.get("X-Fps", "30"))
         pix = (request.headers.get("X-PixFmt", "rgb24")).lower()
+        tgt_w = int(request.headers.get("X-Target-Width", "0"))
+        tgt_h = int(request.headers.get("X-Target-Height", "0"))
     except Exception:
         return jsonify({"error": "invalid headers"}), 400
     if w <= 0 or h <= 0 or fps <= 0:
@@ -412,7 +531,28 @@ def encode_raw():
         pass
     out_mp4 = sdir / "out.mp4"
 
-    # Build ffmpeg command: stdin rawvideo → MP4 NVENC file
+    # If no target provided in headers, optionally honor encoder env OUTPUT_WIDTH/HEIGHT as defaults
+    if tgt_w <= 0 or tgt_h <= 0:
+        try:
+            env_tw = int(os.getenv("OUTPUT_WIDTH", "0"))
+            env_th = int(os.getenv("OUTPUT_HEIGHT", "0"))
+            if env_tw > 0 and env_th > 0:
+                tgt_w, tgt_h = env_tw, env_th
+                app.logger.info(
+                    "encode_raw: using encoder default target %dx%d from env",
+                    tgt_w,
+                    tgt_h,
+                )
+        except Exception:
+            pass
+
+    # Enforce even dimensions for yuv420p
+    if "tgt_w" in locals() and tgt_w > 0 and (tgt_w % 2 == 1):
+        tgt_w += 1
+    if "tgt_h" in locals() and tgt_h > 0 and (tgt_h % 2 == 1):
+        tgt_h += 1
+
+    # Build ffmpeg command: stdin rawvideo → optional scale → MP4 NVENC file
     cmd = [
         "ffmpeg",
         "-hide_banner",
@@ -429,9 +569,114 @@ def encode_raw():
         str(fps),
         "-i",
         "pipe:0",
-        *get_ffmpeg_args(fps),
-        str(out_mp4),
     ]
+
+    # Insert scaler if target size requested and different
+    use_scale = (
+        "tgt_w" in locals()
+        and "tgt_h" in locals()
+        and tgt_w > 0
+        and tgt_h > 0
+        and (tgt_w != w or tgt_h != h)
+    )
+    if use_scale:
+        scaler_choice = _select_scaler(os.getenv("FFMPEG_SCALER"))
+        app.logger.info(
+            "encode_raw: scaler requested (env=%s) -> %s",
+            os.getenv("FFMPEG_SCALER"),
+            scaler_choice,
+        )
+        # Compute aspect-preserving fit inside target, with optional padding to exact target
+        try:
+            s = min(tgt_w / float(w), tgt_h / float(h))
+        except Exception:
+            s = 1.0
+        fit_w = max(2, int(w * s))
+        fit_h = max(2, int(h * s))
+        if fit_w % 2:
+            fit_w -= 1
+        if fit_h % 2:
+            fit_h -= 1
+        fit_w = min(fit_w, tgt_w - (tgt_w % 2))
+        fit_h = min(fit_h, tgt_h - (tgt_h % 2))
+        # Determine if aspect matches target closely (avoid padding when true)
+        try:
+            same_aspect = abs((tgt_w * h) - (tgt_h * w)) <= max(tgt_w, tgt_h)
+        except Exception:
+            same_aspect = False
+        app.logger.info(
+            "encode_raw: fit %dx%d within %dx%d (input %dx%d) same_aspect=%s",
+            fit_w,
+            fit_h,
+            tgt_w,
+            tgt_h,
+            w,
+            h,
+            same_aspect,
+        )
+        if same_aspect:
+            # Direct scale to the exact target size (no padding needed)
+            if scaler_choice == "npp":
+                vf = (
+                    f"format=nv12,hwupload_cuda,"
+                    f"scale_npp={tgt_w}:{tgt_h}:interp_algo=lanczos:format=nv12,"
+                    f"setsar=1"
+                )
+                cmd += ["-vf", vf]
+            elif scaler_choice == "cuda":
+                vf = (
+                    f"format=nv12,hwupload_cuda,"
+                    f"scale_cuda={tgt_w}:{tgt_h}:format=nv12,"
+                    f"setsar=1"
+                )
+                cmd += ["-vf", vf]
+            else:
+                vf = f"scale={tgt_w}:{tgt_h}:flags=lanczos,setsar=1"
+                cmd += ["-vf", vf]
+        else:
+            # Scale to fit and pad to the exact target
+            if scaler_choice == "npp":
+                vf = (
+                    f"format=nv12,hwupload_cuda,"
+                    f"scale_npp={fit_w}:{fit_h}:interp_algo=lanczos:format=nv12,"
+                    f"hwdownload,format=nv12,"
+                    f"pad={tgt_w}:{tgt_h}:(ow-iw)/2:(oh-ih)/2,setsar=1"
+                )
+                cmd += ["-vf", vf]
+            elif scaler_choice == "cuda":
+                vf = (
+                    f"format=nv12,hwupload_cuda,"
+                    f"scale_cuda={fit_w}:{fit_h}:format=nv12,"
+                    f"hwdownload,format=nv12,"
+                    f"pad={tgt_w}:{tgt_h}:(ow-iw)/2:(oh-ih)/2,setsar=1"
+                )
+                cmd += ["-vf", vf]
+            else:
+                vf = (
+                    f"scale={fit_w}:{fit_h}:flags=lanczos,"
+                    f"pad={tgt_w}:{tgt_h}:(ow-iw)/2:(oh-ih)/2,setsar=1"
+                )
+                cmd += ["-vf", vf]
+
+    enc_args = get_ffmpeg_args(fps)
+    # If using GPU scaler, avoid forcing SW pix_fmt yuv420p which inserts auto_scale
+    if use_scale:
+        scaler_choice = _select_scaler(os.getenv("FFMPEG_SCALER"))
+        if scaler_choice in ("npp", "cuda"):
+            try:
+                i = 0
+                while i < len(enc_args):
+                    if (
+                        enc_args[i] == "-pix_fmt"
+                        and i + 1 < len(enc_args)
+                        and enc_args[i + 1] == "yuv420p"
+                    ):
+                        del enc_args[i : i + 2]
+                        break
+                    i += 1
+            except Exception:
+                pass
+    cmd += [*enc_args, str(out_mp4)]
 
     app.logger.info("encode_raw: starting ffmpeg %s", " ".join(cmd))
 
@@ -496,6 +741,31 @@ def encode_raw():
     app.logger.info(
         "encode_raw: ok bytes_in=%s out_bytes=%s", bytes_in, out_mp4.stat().st_size
     )
+    # Probe encoded dimensions for client logging
+    enc_w = enc_h = None
+    try:
+        probe = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height",
+                "-of",
+                "csv=p=0",
+                str(out_mp4),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if probe.returncode == 0 and probe.stdout:
+            parts = probe.stdout.strip().split(",")
+            if len(parts) >= 2:
+                enc_w, enc_h = parts[0], parts[1]
+    except Exception:
+        pass
 
     def _iter_out():
         with open(out_mp4, "rb") as f:
@@ -508,6 +778,9 @@ def encode_raw():
     resp = Response(_iter_out(), mimetype="video/mp4")
     try:
         resp.headers["Content-Length"] = str(out_mp4.stat().st_size)
+        if enc_w and enc_h:
+            resp.headers["X-Encoded-Width"] = str(enc_w)
+            resp.headers["X-Encoded-Height"] = str(enc_h)
     except Exception:
         pass
     resp.headers["Connection"] = "close"
