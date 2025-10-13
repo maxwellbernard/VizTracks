@@ -28,6 +28,21 @@ def _iter_frames_jpeg(anim, facecolor: str = "#F0F0F0") -> Iterator[bytes]:
     """Yield JPEG bytes frame-by-frame without materializing the whole animation."""
     fig = anim._fig
 
+    # One-time resolution debug
+    try:
+        fw, fh = fig.get_figwidth(), fig.get_figheight()
+        pw, ph = int(round(fw * fig.dpi)), int(round(fh * fig.dpi))
+        logger.info(
+            "encoder: figure dpi=%s figsize=(%.2f,%.2f) pixels=%sx%s",
+            fig.dpi,
+            fw,
+            fh,
+            pw,
+            ph,
+        )
+    except Exception:
+        pass
+
     try:
         mpl.rcParams["text.antialiased"] = False
         mpl.rcParams["patch.antialiased"] = False
@@ -143,6 +158,20 @@ def _iter_frames_rgb(anim, facecolor: str = "#F0F0F0") -> Iterator[np.ndarray]:
         mpl.rcParams["patch.antialiased"] = False
         mpl.rcParams["lines.antialiased"] = False
         mpl.rcParams["agg.path.chunksize"] = 10000
+    except Exception:
+        pass
+    # One-time resolution debug
+    try:
+        fw, fh = fig.get_figwidth(), fig.get_figheight()
+        pw, ph = int(round(fw * fig.dpi)), int(round(fh * fig.dpi))
+        logger.info(
+            "encoder(rgb): figure dpi=%s figsize=(%.2f,%.2f) pixels=%sx%s",
+            fig.dpi,
+            fw,
+            fh,
+            pw,
+            ph,
+        )
     except Exception:
         pass
     try:
