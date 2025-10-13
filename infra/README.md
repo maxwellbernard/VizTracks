@@ -25,3 +25,4 @@ infra/
   - Region: ord
   - Port: 8080
   - VM: performance, gpu_kind=l40s, gpus=1, 4 CPUs, 16GB
+  - GPU used: NVIDIA L40S
