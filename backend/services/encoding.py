@@ -195,50 +195,62 @@ def _iter_frames_rgb(anim, facecolor: str = "#F0F0F0") -> Iterator[np.ndarray]:
         buf = np.frombuffer(canvas.buffer_rgba(), dtype=np.uint8).reshape(h, w, 4)
         return buf[:, :, :3].copy(order="C")
 
-    # Always use _draw_next_frame with blit=True to obtain the artists
-    while True:
-        try:
-            artists = anim._draw_next_frame(frame_idx, blit=True)
-        except StopIteration:
-            break
-        if not isinstance(artists, (list, tuple)):
-            # Try to infer artists from animated=True flags on the main axes
+    # Iterate deterministically over Matplotlib's frame sequence
+    if hasattr(anim, "new_frame_seq"):
+        for framedata in anim.new_frame_seq():
             try:
-                if main_ax is not None:
-                    inferred = [
-                        a
-                        for a in getattr(main_ax, "get_children", lambda: [])()
-                        if hasattr(a, "get_animated") and a.get_animated()
-                    ]
-                else:
-                    inferred = []
-                if not inferred:
-                    # As a broader fallback, scan the whole figure
-                    try:
+                anim._draw_frame(framedata)
+            except StopIteration:
+                break
+            artists = getattr(anim, "_drawn_artists", None)
+            if not isinstance(artists, (list, tuple)):
+                # Infer artists from animated=True flags
+                inferred = []
+                try:
+                    if main_ax is not None:
+                        inferred = [
+                            a
+                            for a in getattr(main_ax, "get_children", lambda: [])()
+                            if hasattr(a, "get_animated") and a.get_animated()
+                        ]
+                    if not inferred:
                         inferred = [
                             a
                             for a in fig.findobj()
                             if hasattr(a, "get_animated") and a.get_animated()
                         ]
-                    except Exception:
-                        inferred = []
+                except Exception:
+                    inferred = []
                 if inferred:
                     artists = inferred
-                    logger.info(
-                        "client: animate() returned no artists, using %d inferred animated artists",
-                        len(inferred),
-                    )
+                    if frame_idx % 200 == 0:
+                        logger.info(
+                            "client: animate() returned no artists, using %d inferred animated artists",
+                            len(inferred),
+                        )
                 else:
                     raise RuntimeError(
                         "Animate did not return artists and no animated artists inferred; blit required"
                     )
-            except Exception:
+            rgb = grab_rgb_blit(list(artists))
+            if frame_idx % 200 == 0:
+                logger.info("client: prepared frame %s (rgb)", frame_idx)
+            frame_idx += 1
+            yield rgb
+    else:
+        # Fallback: use total_frames if provided
+        total_frames = getattr(anim, "total_frames", None)
+        if total_frames is None:
+            raise RuntimeError("Animation missing frame sequence and total_frames")
+        for frame_idx in range(total_frames):
+            anim._draw_frame(frame_idx)
+            artists = getattr(anim, "_drawn_artists", None)
+            if not isinstance(artists, (list, tuple)):
                 raise RuntimeError("Animate did not return artists; blit required")
-        rgb = grab_rgb_blit(list(artists))
-        if frame_idx % 200 == 0:
-            logger.info("client: prepared frame %s (rgb)", frame_idx)
-        frame_idx += 1
-        yield rgb
+            rgb = grab_rgb_blit(list(artists))
+            if frame_idx % 200 == 0:
+                logger.info("client: prepared frame %s (rgb)", frame_idx)
+            yield rgb
 
 
 def _session() -> requests.Session:
