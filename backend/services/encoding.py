@@ -202,7 +202,38 @@ def _iter_frames_rgb(anim, facecolor: str = "#F0F0F0") -> Iterator[np.ndarray]:
         except StopIteration:
             break
         if not isinstance(artists, (list, tuple)):
-            raise RuntimeError("Animate did not return artists; blit required")
+            # Try to infer artists from animated=True flags on the main axes
+            try:
+                if main_ax is not None:
+                    inferred = [
+                        a
+                        for a in getattr(main_ax, "get_children", lambda: [])()
+                        if hasattr(a, "get_animated") and a.get_animated()
+                    ]
+                else:
+                    inferred = []
+                if not inferred:
+                    # As a broader fallback, scan the whole figure
+                    try:
+                        inferred = [
+                            a
+                            for a in fig.findobj()
+                            if hasattr(a, "get_animated") and a.get_animated()
+                        ]
+                    except Exception:
+                        inferred = []
+                if inferred:
+                    artists = inferred
+                    logger.info(
+                        "client: animate() returned no artists, using %d inferred animated artists",
+                        len(inferred),
+                    )
+                else:
+                    raise RuntimeError(
+                        "Animate did not return artists and no animated artists inferred; blit required"
+                    )
+            except Exception:
+                raise RuntimeError("Animate did not return artists; blit required")
         rgb = grab_rgb_blit(list(artists))
         if frame_idx % 200 == 0:
             logger.info("client: prepared frame %s (rgb)", frame_idx)
