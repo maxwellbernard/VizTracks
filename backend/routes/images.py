@@ -48,7 +48,7 @@ def generate_image():
         if df is None or df.empty:
             return jsonify(
                 {
-                    "error": "Session expired. Please upload your data again to generate visuals."
+                    "error": "Session expired. Please refresh the browser and upload your data again."
                 }
             ), 400
 

@@ -77,7 +77,7 @@ def generate_animation():
         if df is None:
             return jsonify(
                 {
-                    "error": "Session expired. Please upload your data again to generate visuals."
+                    "error": "Session expired. Please refresh the browser and upload your data again."
                 }
             ), 400
 
