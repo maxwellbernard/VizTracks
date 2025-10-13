@@ -499,12 +499,12 @@ def encode_raw():
             scaler_choice,
         )
         if scaler_choice == "npp":
-            # For NPP, ensure we upload NV12 to the GPU; NPP scale expects YUV (nv12) not rgb0
-            vf = f"format=nv12,hwupload_cuda,scale_npp={tgt_w}:{tgt_h}:interp_algo=lanczos:format=nv12"
+            # For NPP, ensure we upload NV12 to the GPU; enforce 1:1 SAR for correct display size
+            vf = f"format=nv12,hwupload_cuda,scale_npp={tgt_w}:{tgt_h}:interp_algo=lanczos:format=nv12,setsar=1"
             cmd += ["-vf", vf]
         elif scaler_choice == "cuda":
-            # With CUDA scaler too, convert to NV12 prior to upload to minimize colorspace permutations
-            vf = f"format=nv12,hwupload_cuda,scale_cuda={tgt_w}:{tgt_h}:format=nv12"
+            # With CUDA scaler too, convert to NV12 and enforce 1:1 SAR
+            vf = f"format=nv12,hwupload_cuda,scale_cuda={tgt_w}:{tgt_h}:format=nv12,setsar=1"
             cmd += ["-vf", vf]
         else:
             cmd += ["-vf", f"scale={tgt_w}:{tgt_h}:flags=lanczos"]
