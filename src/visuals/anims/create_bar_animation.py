@@ -964,6 +964,14 @@ def create_bar_animation(
         else:
             label_fontsize = 22
 
+        # Compute a small left margin in data units so labels stay inside axes
+        try:
+            x_min, x_max = ax.get_xlim()
+            x_range = max(1e-6, (x_max - x_min))
+            left_margin = max(0.005 * x_range, 0.02 * max_value)
+        except Exception:
+            left_margin = max(0.02 * max_value, 0.02)
+
         for i in range(top_n):
             name = names[i] if i < len(names) else ""
             text_x = display_widths[i]
@@ -993,7 +1001,12 @@ def create_bar_animation(
                 # Update main label text with proper formatting
                 if i < len(labels) and labels[i]:
                     _t0 = time.perf_counter()
-                    label_objects[i].set_position((-offset, bar_center_y))
+                    # Keep label text inside axes (avoid x<0 which causes blit ghosting)
+                    label_objects[i].set_position((left_margin, bar_center_y))
+                    try:
+                        label_objects[i].set_clip_on(True)
+                    except Exception:
+                        pass
                     label_objects[i].set_text(labels[i])
                     label_objects[i].set_fontsize(label_fontsize)
                     label_objects[i].set_visible(True)
@@ -1027,8 +1040,12 @@ def create_bar_animation(
 
                         _t0 = time.perf_counter()
                         artist_label_objects[i].set_position(
-                            (-offset, bar_center_y - artist_y_offset)
+                            (left_margin, bar_center_y - artist_y_offset)
                         )
+                        try:
+                            artist_label_objects[i].set_clip_on(True)
+                        except Exception:
+                            pass
                         artist_label_objects[i].set_text(artist_wrapped)
                         artist_label_objects[i].set_fontsize(label_fontsize - 2)
                         artist_label_objects[i].set_visible(True)
