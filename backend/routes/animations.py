@@ -57,8 +57,13 @@ def generate_animation():
         days = data.get("days", 30)
         interp_steps = data.get("interp_steps", 14)
         period = data.get("period", "d")
-        # Align default DPI with visuals constants for consistent runs
-        dpi = int(data.get("dpi", DEFAULT_VIS_DPI))
+        # Force default DPI for consistent runs (ignore client override)
+        incoming_dpi = data.get("dpi")
+        dpi = int(DEFAULT_VIS_DPI)
+        try:
+            print(f"Route DPI: incoming={incoming_dpi} effective={dpi}")
+        except Exception:
+            pass
         figsize = data.get("figsize", (16, 21.2))
 
         t1 = time.time()

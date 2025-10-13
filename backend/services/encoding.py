@@ -39,151 +39,155 @@ def _iter_frames_jpeg(anim, facecolor: str = "#F0F0F0") -> Iterator[bytes]:
         )
     except Exception:
         pass
-    try:
-        mpl.rcParams["text.antialiased"] = False
-        mpl.rcParams["patch.antialiased"] = False
-        mpl.rcParams["lines.antialiased"] = False
-        mpl.rcParams["agg.path.chunksize"] = 10000
-        mpl.rcParams["path.simplify"] = True
-    except Exception:
-        pass
-
-    try:
-        fig.set_tight_layout(False)
-    except Exception:
-        pass
-
-    renderer = (os.getenv("RENDERER") or "savefig").lower()
-    canvas = None
-    turbo = None
-    if renderer != "savefig":
+    # Ensure rcParams tweaks are temporary and don't affect subsequent runs
+    with mpl.rc_context(
+        {
+            "text.antialiased": False,
+            "patch.antialiased": False,
+            "lines.antialiased": False,
+            "agg.path.chunksize": 10000,
+            "path.simplify": True,
+        }
+    ):
         try:
-            canvas = FigureCanvas(fig)
+            fig.set_tight_layout(False)
         except Exception:
-            canvas = getattr(fig, "canvas", None)
-        try:
-            turbo = TurboJPEG()
-        except Exception:
-            turbo = None
-    if hasattr(anim, "_init_draw"):
-        anim._init_draw()
+            pass
 
-    def _save() -> bytes:
-        jpeg_quality = int(os.getenv("JPEG_QUALITY", "75"))
-        if renderer == "savefig" or canvas is None:
-            out = io.BytesIO()
-            fig.savefig(
-                out,
-                format="jpg",
-                facecolor=fig.get_facecolor(),
-                dpi=fig.dpi,
-                pil_kwargs={
-                    "quality": jpeg_quality,
-                    "optimize": False,
-                    "progressive": False,
-                },
-            )
-            return out.getvalue()
-        else:
-            canvas.draw()
-            w, h = canvas.get_width_height()
-            buf = np.frombuffer(canvas.buffer_rgba(), dtype=np.uint8).reshape(h, w, 4)
-            rgb = buf[:, :, :3].copy(order="C")
-            if turbo is not None:
-                jpeg_bytes = turbo.encode(
-                    rgb,
-                    pixel_format=TJPF_RGB,
-                    quality=jpeg_quality,
-                    jpeg_subsample=2,
-                    flags=TJFLAG_FASTDCT,
-                )
-                return jpeg_bytes
-            else:
-                logger.warning(
-                    "TurboJPEG not available, falling back to Pillow for JPEG encoding"
-                )
-                img = Image.fromarray(rgb, mode="RGB")
+        renderer = (os.getenv("RENDERER") or "savefig").lower()
+        canvas = None
+        turbo = None
+        if renderer != "savefig":
+            try:
+                canvas = FigureCanvas(fig)
+            except Exception:
+                canvas = getattr(fig, "canvas", None)
+            try:
+                turbo = TurboJPEG()
+            except Exception:
+                turbo = None
+        if hasattr(anim, "_init_draw"):
+            anim._init_draw()
+
+        def _save() -> bytes:
+            jpeg_quality = int(os.getenv("JPEG_QUALITY", "75"))
+            if renderer == "savefig" or canvas is None:
                 out = io.BytesIO()
-                img.save(
+                fig.savefig(
                     out,
-                    format="JPEG",
-                    quality=jpeg_quality,
-                    subsampling=2,
-                    optimize=False,
+                    format="jpg",
+                    facecolor=fig.get_facecolor(),
+                    dpi=fig.dpi,
+                    pil_kwargs={
+                        "quality": jpeg_quality,
+                        "optimize": False,
+                        "progressive": False,
+                    },
                 )
                 return out.getvalue()
+            else:
+                canvas.draw()
+                w, h = canvas.get_width_height()
+                buf = np.frombuffer(canvas.buffer_rgba(), dtype=np.uint8).reshape(
+                    h, w, 4
+                )
+                rgb = buf[:, :, :3].copy(order="C")
+                if turbo is not None:
+                    jpeg_bytes = turbo.encode(
+                        rgb,
+                        pixel_format=TJPF_RGB,
+                        quality=jpeg_quality,
+                        jpeg_subsample=2,
+                        flags=TJFLAG_FASTDCT,
+                    )
+                    return jpeg_bytes
+                else:
+                    logger.warning(
+                        "TurboJPEG not available, falling back to Pillow for JPEG encoding"
+                    )
+                    img = Image.fromarray(rgb, mode="RGB")
+                    out = io.BytesIO()
+                    img.save(
+                        out,
+                        format="JPEG",
+                        quality=jpeg_quality,
+                        subsampling=2,
+                        optimize=False,
+                    )
+                    return out.getvalue()
 
-    frame_idx = 0
-    if hasattr(anim, "new_frame_seq"):
-        for framedata in anim.new_frame_seq():
-            anim._draw_frame(framedata)
-            b = _save()
-            if frame_idx % 200 == 0:
-                logger.info("client: prepared frame %s (batching)", frame_idx)
-            frame_idx += 1
-            yield b
-    else:
-        while True:
-            try:
-                anim._draw_next_frame(frame_idx, blit=True)
-            except StopIteration:
-                break
-            b = _save()
-            if frame_idx % 200 == 0:
-                logger.info("client: prepared frame %s (batching)", frame_idx)
-            frame_idx += 1
-            yield b
+        frame_idx = 0
+        if hasattr(anim, "new_frame_seq"):
+            for framedata in anim.new_frame_seq():
+                anim._draw_frame(framedata)
+                b = _save()
+                if frame_idx % 200 == 0:
+                    logger.info("client: prepared frame %s (batching)", frame_idx)
+                frame_idx += 1
+                yield b
+        else:
+            while True:
+                try:
+                    anim._draw_next_frame(frame_idx, blit=True)
+                except StopIteration:
+                    break
+                b = _save()
+                if frame_idx % 200 == 0:
+                    logger.info("client: prepared frame %s (batching)", frame_idx)
+                frame_idx += 1
+                yield b
 
 
 def _iter_frames_rgb(anim, facecolor: str = "#F0F0F0") -> Iterator[np.ndarray]:
     """Yield contiguous RGB numpy arrays using Agg renderer."""
     fig = anim._fig
-    try:
-        mpl.rcParams["text.antialiased"] = False
-        mpl.rcParams["patch.antialiased"] = False
-        mpl.rcParams["lines.antialiased"] = False
-        mpl.rcParams["agg.path.chunksize"] = 10000
-    except Exception:
-        pass
-    try:
-        fig.set_tight_layout(False)
-    except Exception:
-        pass
-    canvas = FigureCanvas(fig)
-    if hasattr(anim, "_init_draw"):
-        anim._init_draw()
+    with mpl.rc_context(
+        {
+            "text.antialiased": False,
+            "patch.antialiased": False,
+            "lines.antialiased": False,
+            "agg.path.chunksize": 10000,
+        }
+    ):
+        try:
+            fig.set_tight_layout(False)
+        except Exception:
+            pass
+        canvas = FigureCanvas(fig)
+        if hasattr(anim, "_init_draw"):
+            anim._init_draw()
 
-    frame_idx = 0
+        frame_idx = 0
 
-    def grab_rgb() -> np.ndarray:
-        t0 = time.perf_counter()
-        canvas.draw()
-        t_draw = time.perf_counter() - t0
-        if frame_idx % 100 == 0:
-            logger.info("perf: draw %.4f s (frame=%d)", t_draw, frame_idx)
-        w, h = canvas.get_width_height()
-        buf = np.frombuffer(canvas.buffer_rgba(), dtype=np.uint8).reshape(h, w, 4)
-        return buf[:, :, :3].copy(order="C")
+        def grab_rgb() -> np.ndarray:
+            t0 = time.perf_counter()
+            canvas.draw()
+            t_draw = time.perf_counter() - t0
+            if frame_idx % 100 == 0:
+                logger.info("perf: draw %.4f s (frame=%d)", t_draw, frame_idx)
+            w, h = canvas.get_width_height()
+            buf = np.frombuffer(canvas.buffer_rgba(), dtype=np.uint8).reshape(h, w, 4)
+            return buf[:, :, :3].copy(order="C")
 
-    if hasattr(anim, "new_frame_seq"):
-        for framedata in anim.new_frame_seq():
-            anim._draw_frame(framedata)
-            rgb = grab_rgb()
-            if frame_idx % 200 == 0:
-                logger.info("client: prepared frame %s (rgb)", frame_idx)
-            frame_idx += 1
-            yield rgb
-    else:
-        while True:
-            try:
-                anim._draw_next_frame(frame_idx, blit=True)
-            except StopIteration:
-                break
-            rgb = grab_rgb()
-            if frame_idx % 200 == 0:
-                logger.info("client: prepared frame %s (rgb)", frame_idx)
-            frame_idx += 1
-            yield rgb
+        if hasattr(anim, "new_frame_seq"):
+            for framedata in anim.new_frame_seq():
+                anim._draw_frame(framedata)
+                rgb = grab_rgb()
+                if frame_idx % 200 == 0:
+                    logger.info("client: prepared frame %s (rgb)", frame_idx)
+                frame_idx += 1
+                yield rgb
+        else:
+            while True:
+                try:
+                    anim._draw_next_frame(frame_idx, blit=True)
+                except StopIteration:
+                    break
+                rgb = grab_rgb()
+                if frame_idx % 200 == 0:
+                    logger.info("client: prepared frame %s (rgb)", frame_idx)
+                frame_idx += 1
+                yield rgb
 
 
 def _session() -> requests.Session:
