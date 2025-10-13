@@ -5,8 +5,9 @@ import os
 import queue
 import threading
 import time
-from typing import Iterator, Optional
+from typing import Iterator
 from typing import Iterator as TypingIterator
+from typing import Optional
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -101,6 +102,12 @@ def _iter_frames_jpeg(anim, facecolor: str = "#F0F0F0") -> Iterator[bytes]:
                 return out.getvalue()
 
     frame_idx = 0
+    # Hint Matplotlib about frame count to stabilize internal state
+    try:
+        if getattr(anim, "save_count", None) is None:
+            setattr(anim, "save_count", getattr(anim, "_stop", frame_idx) or 0)
+    except Exception:
+        pass
     if hasattr(anim, "new_frame_seq"):
         for framedata in anim.new_frame_seq():
             anim._draw_frame(framedata)
@@ -188,30 +195,19 @@ def _iter_frames_rgb(anim, facecolor: str = "#F0F0F0") -> Iterator[np.ndarray]:
         buf = np.frombuffer(canvas.buffer_rgba(), dtype=np.uint8).reshape(h, w, 4)
         return buf[:, :, :3].copy(order="C")
 
-    if hasattr(anim, "new_frame_seq"):
-        for framedata in anim.new_frame_seq():
-            artists = anim._draw_frame(framedata)
-            # Matplotlib must return artists when blitting
-            if not isinstance(artists, (list, tuple)):
-                raise RuntimeError("Animate did not return artists; blit required")
-            rgb = grab_rgb_blit(list(artists))
-            if frame_idx % 200 == 0:
-                logger.info("client: prepared frame %s (rgb)", frame_idx)
-            frame_idx += 1
-            yield rgb
-    else:
-        while True:
-            try:
-                artists = anim._draw_next_frame(frame_idx, blit=True)
-            except StopIteration:
-                break
-            if not isinstance(artists, (list, tuple)):
-                raise RuntimeError("Animate did not return artists; blit required")
-            rgb = grab_rgb_blit(list(artists))
-            if frame_idx % 200 == 0:
-                logger.info("client: prepared frame %s (rgb)", frame_idx)
-            frame_idx += 1
-            yield rgb
+    # Always use _draw_next_frame with blit=True to obtain the artists
+    while True:
+        try:
+            artists = anim._draw_next_frame(frame_idx, blit=True)
+        except StopIteration:
+            break
+        if not isinstance(artists, (list, tuple)):
+            raise RuntimeError("Animate did not return artists; blit required")
+        rgb = grab_rgb_blit(list(artists))
+        if frame_idx % 200 == 0:
+            logger.info("client: prepared frame %s (rgb)", frame_idx)
+        frame_idx += 1
+        yield rgb
 
 
 def _session() -> requests.Session:
