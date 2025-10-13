@@ -106,21 +106,77 @@ def nvenc_ready_cached() -> bool:
 
 
 def get_ffmpeg_args(fps: int) -> list[str]:
-    return [
+    """Build NVENC args with environment overrides for quality.
+
+    Env vars (all optional):
+      NVENC_PRESET:    p1..p7 (default p1)
+      NVENC_RC:        vbr | vbr_hq | cbr | cbr_hq | constqp (default vbr)
+      NVENC_CQ:        integer CQ (lower is higher quality, default 30)
+      NVENC_BITRATE:   target bitrate like 6M or 8000k (default 0 for cq-based VBR)
+      NVENC_LOOKAHEAD: integer frames (e.g., 20)
+      NVENC_SPATIAL_AQ: 1 to enable, 0 to disable (default 1)
+      NVENC_TEMPORAL_AQ: 1 to enable, 0 to disable (default 1)
+      NVENC_AQ_STRENGTH: 1..15 (default 8)
+      NVENC_BFRAMES:   number of B-frames (default 3)
+      NVENC_PROFILE:   baseline | main | high (default high)
+    """
+    preset = os.getenv("NVENC_PRESET", "p1")
+    rc = os.getenv("NVENC_RC", "vbr").lower()
+    cq = os.getenv("NVENC_CQ", "30")
+    bitrate = os.getenv("NVENC_BITRATE", "0")
+    lookahead = os.getenv("NVENC_LOOKAHEAD")
+    spatial_aq = os.getenv("NVENC_SPATIAL_AQ", "1")
+    temporal_aq = os.getenv("NVENC_TEMPORAL_AQ", "1")
+    aq_strength = os.getenv("NVENC_AQ_STRENGTH", "8")
+    bframes = os.getenv("NVENC_BFRAMES", "3")
+    profile = os.getenv("NVENC_PROFILE", "high")
+
+    args: list[str] = [
         "-c:v",
         "h264_nvenc",
         "-preset",
-        "p1",
+        preset,
         "-rc",
-        "vbr",
+        rc,
         "-tune",
         "hq",
-        "-cq",
-        "30",
-        "-b:v",
-        "0",
+    ]
+
+    # Rate control specifics
+    if rc in ("vbr", "vbr_hq"):
+        # Default to CQ-based VBR if bitrate not provided or set to 0
+        if bitrate and bitrate not in ("0", "0k", "0M"):
+            args += ["-b:v", bitrate]
+        else:
+            args += ["-cq", cq, "-b:v", "0"]
+    elif rc in ("cbr", "cbr_hq"):
+        # Require a bitrate for CBR; fallback to 6M if missing
+        br = bitrate if bitrate and bitrate not in ("0", "0k", "0M") else "6M"
+        # Use a reasonable buffer
+        args += ["-b:v", br, "-maxrate", br, "-bufsize", "2*" + br]
+    elif rc == "constqp":
+        # Use -qp (or -cq) for constant QP; cq maps reasonably
+        args += ["-qp", cq]
+
+    # Quality/perceptual tweaks
+    try:
+        if int(bframes) >= 0:
+            args += ["-bf", str(int(bframes))]
+    except Exception:
+        pass
+    if lookahead and lookahead.isdigit():
+        args += ["-rc-lookahead", lookahead]
+    if spatial_aq in ("1", "true", "True"):
+        args += ["-spatial-aq", "1", "-aq-strength", aq_strength]
+    if temporal_aq in ("1", "true", "True"):
+        args += ["-temporal-aq", "1"]
+
+    # Compatibility and container
+    args += [
         "-pix_fmt",
         "yuv420p",
+        "-profile:v",
+        profile,
         "-g",
         str(int(fps * 2)),
         "-movflags",
@@ -129,6 +185,7 @@ def get_ffmpeg_args(fps: int) -> list[str]:
         "0",
         "-an",
     ]
+    return args
 
 
 def _ensure_sessions_dir() -> Path:
