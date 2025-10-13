@@ -4,7 +4,7 @@ from PIL import Image
 
 # Animation/layout defaults
 days: int = 30
-dpi: int = 40
+dpi: int = 30
 figsize: tuple[float, float] = (16, 21.2)
 interp_steps: int = 17
 period: str = "d"

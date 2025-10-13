@@ -31,7 +31,7 @@ jobs:
             encoder:
               - 'encoder/**'
               - 'infra/encoder/**'
-              - 'src/core/constants.py'
+              - 'src/visuals/core/constants.py'
 
   deploy-backend:
     name: Deploy backend
