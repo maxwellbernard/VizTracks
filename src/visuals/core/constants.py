@@ -4,7 +4,7 @@ from PIL import Image
 
 # Animation/layout defaults
 days: int = 30
-dpi: int = 40
+dpi: int = 45
 figsize: tuple[float, float] = (16, 21.2)
 interp_steps: int = 17
 period: str = "d"
@@ -12,4 +12,4 @@ period: str = "d"
 # Resampling filter for image resizing
 RESAMPLING_FILTER = Image.Resampling.BILINEAR
 
-DEFAULT_VIS_DPI = 40
+DEFAULT_VIS_DPI = 45
