@@ -636,7 +636,6 @@ def create_bar_animation(
         transform=ax.transAxes,
         fontsize=38,
         fontproperties=font_prop_heading,
-        bbox=dict(facecolor="#F0F0F0", edgecolor="none", alpha=0.7),
         color="#A9A9A9",
     )
     # x-axis label for clarity
@@ -647,7 +646,6 @@ def create_bar_animation(
         transform=ax.transAxes,
         fontsize=28,
         fontproperties=font_prop_heading,
-        bbox=dict(facecolor="#F0F0F0", edgecolor="none", alpha=0.7),
         color="#A9A9A9",
         ha="center",
         va="top",
