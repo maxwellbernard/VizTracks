@@ -519,6 +519,11 @@ def create_bar_animation(
         edgecolor="#D3D3D3",
         linewidth=1.2,
     )
+    try:
+        for b in bars:
+            b.set_zorder(5)
+    except Exception:
+        pass
     ax.set_yticks([])
     ax.tick_params(axis="y", which="both", length=0, pad=15)
     ax.xaxis.label.set_fontproperties(font_path_labels)
@@ -585,6 +590,10 @@ def create_bar_animation(
             visible=False,
         )
         label_objects.append(label_obj)
+        try:
+            label_obj.set_zorder(9)
+        except Exception:
+            pass
 
         # y-axis labels subtext
         artist_obj = ax.text(
@@ -599,6 +608,10 @@ def create_bar_animation(
             visible=False,
         )
         artist_label_objects.append(artist_obj)
+        try:
+            artist_obj.set_zorder(9)
+        except Exception:
+            pass
 
         # Pre-create OffsetImage and AnnotationBbox for each bar
         offset_img = OffsetImage(blank_img, zoom=1)
@@ -618,6 +631,12 @@ def create_bar_animation(
             ),
         )
         ax.add_artist(ab)
+        # Ensure images render above axes/spines and aren't clipped at the y-axis
+        try:
+            ab.set_zorder(10)
+            ab.set_clip_on(False)
+        except Exception:
+            pass
         image_annotations.append(ab)
         offset_images.append(offset_img)
 
@@ -642,6 +661,11 @@ def create_bar_animation(
         bbox=dict(facecolor="#F0F0F0", edgecolor="none", alpha=0.7),
         color="#A9A9A9",
     )
+    try:
+        year_text.set_zorder(9)
+        month_text.set_zorder(9)
+    except Exception:
+        pass
     # x-axis label for clarity
     ax.text(
         0.38,
