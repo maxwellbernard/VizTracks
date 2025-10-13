@@ -6,6 +6,7 @@ import queue
 import threading
 import time
 from typing import Iterator, Optional
+from typing import Iterator as TypingIterator
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -14,7 +15,7 @@ import requests
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 from PIL import Image
 from requests.adapters import HTTPAdapter, Retry
-from turbojpeg import TJPF_RGB, TurboJPEG
+from turbojpeg import TJFLAG_FASTDCT, TJPF_RGB, TurboJPEG
 
 from backend.core.config import ENCODER_URL
 
@@ -30,6 +31,7 @@ def _iter_frames_jpeg(anim, facecolor: str = "#F0F0F0") -> Iterator[bytes]:
         mpl.rcParams["patch.antialiased"] = False
         mpl.rcParams["lines.antialiased"] = False
         mpl.rcParams["agg.path.chunksize"] = 10000
+        mpl.rcParams["path.simplify"] = True
     except Exception:
         pass
 
@@ -80,7 +82,7 @@ def _iter_frames_jpeg(anim, facecolor: str = "#F0F0F0") -> Iterator[bytes]:
                     pixel_format=TJPF_RGB,
                     quality=jpeg_quality,
                     jpeg_subsample=2,
-                    flags=0,
+                    flags=TJFLAG_FASTDCT,
                 )
                 return jpeg_bytes
             else:
@@ -110,7 +112,7 @@ def _iter_frames_jpeg(anim, facecolor: str = "#F0F0F0") -> Iterator[bytes]:
     else:
         while True:
             try:
-                anim._draw_next_frame(frame_idx, blit=False)
+                anim._draw_next_frame(frame_idx, blit=True)
             except StopIteration:
                 break
             b = _save()
@@ -141,7 +143,11 @@ def _iter_frames_rgb(anim, facecolor: str = "#F0F0F0") -> Iterator[np.ndarray]:
     frame_idx = 0
 
     def grab_rgb() -> np.ndarray:
+        t0 = time.perf_counter()
         canvas.draw()
+        t_draw = time.perf_counter() - t0
+        if frame_idx % 100 == 0:
+            logger.info("perf: draw %.4f s (frame=%d)", t_draw, frame_idx)
         w, h = canvas.get_width_height()
         buf = np.frombuffer(canvas.buffer_rgba(), dtype=np.uint8).reshape(h, w, 4)
         return buf[:, :, :3].copy(order="C")
@@ -157,7 +163,7 @@ def _iter_frames_rgb(anim, facecolor: str = "#F0F0F0") -> Iterator[np.ndarray]:
     else:
         while True:
             try:
-                anim._draw_next_frame(frame_idx, blit=False)
+                anim._draw_next_frame(frame_idx, blit=True)
             except StopIteration:
                 break
             rgb = grab_rgb()
@@ -224,28 +230,39 @@ def _encode_remote(anim, out_path: str, fps: int) -> bool:
                 def encoder_worker() -> None:
                     try:
                         try:
-                            from turbojpeg import TJPF_RGB, TurboJPEG
+                            from turbojpeg import TJFLAG_FASTDCT, TJPF_RGB, TurboJPEG
 
                             turbo = TurboJPEG()
                         except Exception:
                             turbo = None
+
                         q = raw_q
+                        enc_i = 0
                         while True:
-                            arr = q.get()
-                            if arr is None:
+                            item = q.get()
+                            if item is None:
                                 jpg_q.put(None)
                                 q.task_done()
                                 break
+
+                            # Support ndarray or (idx, ndarray)
+                            if isinstance(item, tuple) and len(item) >= 2:
+                                idx, arr = item
+                            else:
+                                arr = item
                             try:
                                 if turbo is not None:
-                                    jpg_bytes = turbo.encode(
+                                    t0 = time.perf_counter()
+                                    jpeg_bytes = turbo.encode(
                                         arr,
                                         pixel_format=TJPF_RGB,
                                         quality=int(os.getenv("JPEG_QUALITY", "75")),
                                         jpeg_subsample=2,
-                                        flags=0,
+                                        flags=TJFLAG_FASTDCT,
                                     )
+                                    t_jpeg = time.perf_counter() - t0
                                 else:
+                                    t0 = time.perf_counter()
                                     img = Image.fromarray(arr, mode="RGB")
                                     out = io.BytesIO()
                                     img.save(
@@ -255,8 +272,16 @@ def _encode_remote(anim, out_path: str, fps: int) -> bool:
                                         subsampling=2,
                                         optimize=False,
                                     )
-                                    jpg_bytes = out.getvalue()
-                                jpg_q.put(base64.b64encode(jpg_bytes).decode("utf-8"))
+                                    jpeg_bytes = out.getvalue()
+                                    t_jpeg = time.perf_counter() - t0
+
+                                enc_i += 1
+                                if (enc_i % 100) == 0:
+                                    logger.info(
+                                        "client: jpeg %.3f s (frame=%d)", t_jpeg, enc_i
+                                    )
+
+                                jpg_q.put(base64.b64encode(jpeg_bytes).decode("utf-8"))
                             finally:
                                 q.task_done()
                     except Exception as ex:
@@ -444,6 +469,86 @@ def _encode_remote(anim, out_path: str, fps: int) -> bool:
         return False
 
 
+def _encode_raw(anim, out_path: str, fps: int) -> None:
+    """Stream raw RGB frames to the encoder's /encode_raw endpoint and save MP4."""
+    if not ENCODER_URL:
+        raise RuntimeError("ENCODER_URL not set; GPU encoder required")
+
+    base = ENCODER_URL.rstrip("/")
+
+    def _wait_for_encoder_ready(url_base: str, timeout_s: float = 90.0) -> None:
+        deadline = time.monotonic() + timeout_s
+        last_err = None
+        while time.monotonic() < deadline:
+            try:
+                r = requests.get(f"{url_base}/health", timeout=3)
+                if r.status_code == 200 and (r.json().get("status") == "ok"):
+                    return
+            except Exception as e:
+                last_err = e
+            time.sleep(0.5)
+        if last_err:
+            logger.warning("client: encoder health wait gave up: %s", last_err)
+        else:
+            logger.warning("client: encoder health wait timed out")
+
+    # Prime the first frame to get dimensions, after waiting for readiness
+    _wait_for_encoder_ready(base)
+    frame_iter = _iter_frames_rgb(anim, facecolor="#F0F0F0")
+    try:
+        first = next(frame_iter)
+    except StopIteration:
+        raise RuntimeError("No frames to encode")
+
+    if not isinstance(first, np.ndarray) or first.ndim != 3 or first.shape[2] != 3:
+        raise RuntimeError("Frame must be HxWx3 uint8 array")
+
+    h, w, _ = first.shape
+
+    def body() -> TypingIterator[bytes]:
+        # yield first then the rest
+        yield first.tobytes()
+        idx = 1
+        for arr in frame_iter:
+            if idx % 200 == 0:
+                logger.info("client: prepared frame %d (raw streaming)", idx)
+            # ensure contiguous
+            if not arr.flags.c_contiguous:
+                arr = np.ascontiguousarray(arr)
+            yield arr.tobytes()
+            idx += 1
+
+    headers = {
+        "Content-Type": "application/octet-stream",
+        "X-Width": str(w),
+        "X-Height": str(h),
+        "X-Fps": str(fps),
+        "X-PixFmt": "rgb24",
+        "Expect": "100-continue",
+        "Connection": "close",
+    }
+
+    url = f"{base}/encode_raw"
+    logger.info(
+        "client: raw encode start %sx%s fps=%s -> %s",
+        w,
+        h,
+        fps,
+        out_path,
+    )
+    with requests.post(
+        url, data=body(), headers=headers, stream=True, timeout=1800
+    ) as r:
+        r.raise_for_status()
+        total = 0
+        with open(out_path, "wb") as f:
+            for chunk in r.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    f.write(chunk)
+                    total += len(chunk)
+        logger.info("client: raw encode ok bytes=%.2f MiB", total / (1024 * 1024))
+
+
 def encode_animation(anim, out_path: str, fps: int) -> None:
     """
     Remote GPU encoder only (no CPU fallback).
@@ -452,9 +557,8 @@ def encode_animation(anim, out_path: str, fps: int) -> None:
     fig: Optional[plt.Figure] = getattr(anim, "_fig", None)
     try:
         logger.info("client: encode_animation start fps=%s out=%s", fps, out_path)
-        ok = _encode_remote(anim, out_path, fps)
-        if not ok:
-            raise RuntimeError("Remote GPU encoder failed or ENCODER_URL not set")
+        # Use raw streaming path by default
+        _encode_raw(anim, out_path, fps)
     finally:
         try:
             if fig is not None:

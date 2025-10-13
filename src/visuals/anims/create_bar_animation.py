@@ -696,6 +696,11 @@ def create_bar_animation(
     def animate(frame) -> None:
         """Update the bar chart for each frame."""
         nonlocal anim_state
+        t_frame_start = time.perf_counter()
+        t_bars = 0.0
+        t_texts = 0.0
+        t_images = 0.0
+        t_axes = 0.0
         main_frame = frame // interp_steps
         sub_step = frame % interp_steps
         current_time = timestamps[main_frame]
@@ -803,6 +808,7 @@ def create_bar_animation(
             active_bars = [False] * top_n
 
         for i, bar in enumerate(bars):
+            _t0 = time.perf_counter()
             if active_bars[i]:
                 bar.set_width(display_widths[i])
                 bar.set_y(interp_positions[i] - bar_height / 2)
@@ -811,6 +817,7 @@ def create_bar_animation(
                 bar.set_width(0)
                 bar.set_y(-1)  # Move off-screen
                 bar.set_visible(False)  # Hide completely
+            t_bars += time.perf_counter() - _t0
 
         max_value = max(display_widths) if display_widths else 1
         offset = max(0.01, max_value * 0.03)
@@ -841,25 +848,36 @@ def create_bar_animation(
 
             if frame == 0 and sub_step == 0:
                 # Hide all objects on first frame
+                _t0 = time.perf_counter()
                 text_objects[i].set_visible(False)
                 label_objects[i].set_visible(False)
                 artist_label_objects[i].set_visible(False)
+                t_texts += time.perf_counter() - _t0
+
+                _t0 = time.perf_counter()
                 image_annotations[i].set_visible(False)
+                t_images += time.perf_counter() - _t0
                 anim_state.last_img_obj[i] = None  # Reset last image
             elif has_data:  # Only show elements for bars with data
+                _t0 = time.perf_counter()
                 text_objects[i].set_position((text_x + offset, bar_center_y))
                 text_objects[i].set_text(f"{interp_widths[i]:,.0f}")
                 text_objects[i].set_fontsize(24)
                 text_objects[i].set_visible(True)
+                t_texts += time.perf_counter() - _t0
 
                 # Update main label text with proper formatting
                 if i < len(labels) and labels[i]:
+                    _t0 = time.perf_counter()
                     label_objects[i].set_position((-offset, bar_center_y))
                     label_objects[i].set_text(labels[i])
                     label_objects[i].set_fontsize(label_fontsize)
                     label_objects[i].set_visible(True)
+                    t_texts += time.perf_counter() - _t0
                 else:
+                    _t0 = time.perf_counter()
                     label_objects[i].set_visible(False)
+                    t_texts += time.perf_counter() - _t0
 
                 if selected_attribute in ["track_name", "album_name"]:
                     if i < len(artist_names) and artist_names[i]:
@@ -883,16 +901,22 @@ def create_bar_animation(
                         top_n_spacing = line_spacing_mapping.get(top_n, {})
                         artist_y_offset = top_n_spacing.get(song_lines, 0.30)
 
+                        _t0 = time.perf_counter()
                         artist_label_objects[i].set_position(
                             (-offset, bar_center_y - artist_y_offset)
                         )
                         artist_label_objects[i].set_text(artist_wrapped)
                         artist_label_objects[i].set_fontsize(label_fontsize - 2)
                         artist_label_objects[i].set_visible(True)
+                        t_texts += time.perf_counter() - _t0
                     else:
+                        _t0 = time.perf_counter()
                         artist_label_objects[i].set_visible(False)
+                        t_texts += time.perf_counter() - _t0
                 else:
+                    _t0 = time.perf_counter()
                     artist_label_objects[i].set_visible(False)
+                    t_texts += time.perf_counter() - _t0
 
                 cache_key = f"{name}_top_n_{top_n}"
                 if selected_attribute == "track_name" and i < len(names):
@@ -915,23 +939,32 @@ def create_bar_animation(
 
                 if img_data and text_x > 0 and name:
                     # Only update OffsetImage if the image object has changed
+                    _t0 = time.perf_counter()
                     img_obj = img_data["img"]
                     if anim_state.last_img_obj[i] is not img_obj:
                         offset_images[i].set_data(np.array(img_obj))
                         anim_state.last_img_obj[i] = img_obj
                     image_annotations[i].xy = (text_x, bar_center_y)
                     image_annotations[i].set_visible(True)
+                    t_images += time.perf_counter() - _t0
                     if img_data["color"]:
                         bars[i].set_facecolor(np.array(img_data["color"]) / 255)
                 else:
+                    _t0 = time.perf_counter()
                     image_annotations[i].set_visible(False)
                     anim_state.last_img_obj[i] = None
+                    t_images += time.perf_counter() - _t0
             else:
+                _t0 = time.perf_counter()
                 text_objects[i].set_visible(False)
                 label_objects[i].set_visible(False)
                 artist_label_objects[i].set_visible(False)
+                t_texts += time.perf_counter() - _t0
+
+                _t0 = time.perf_counter()
                 image_annotations[i].set_visible(False)
                 anim_state.last_img_obj[i] = None
+                t_images += time.perf_counter() - _t0
 
         # update the state for the next frame
         if sub_step == interp_steps - 1:
@@ -942,14 +975,20 @@ def create_bar_animation(
         else:
             anim_state.prev_interp_positions = interp_positions[:]
 
+        _t0 = time.perf_counter()
         ax.set_yticks([])
         ax.set_xlim(0, max(display_widths) * 1.1)
+        t_axes += time.perf_counter() - _t0
 
         # update year and month text
         year_text.set_text(f"{current_time.year}")
         month_text.set_text(f"{current_time.strftime('%B')}")
-        # t_text = time.time()
-        # print(f"[TIMING] frame={frame} total={t_text - t_start:.4f}s")
+        # Emit timing summary occasionally to avoid log spam
+        t_total = time.perf_counter() - t_frame_start
+        if frame % 100 == 0 or frame < 3:
+            print(
+                f"[TIMING] frame={frame} bars={t_bars:.4f}s texts={t_texts:.4f}s images={t_images:.4f}s axes={t_axes:.4f}s total={t_total:.4f}s"
+            )
 
     t7 = time.time()
     print(f"Time for animation setup: {t7 - t6:.2f} seconds")

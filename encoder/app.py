@@ -379,6 +379,141 @@ def finalize():
             return jsonify({"error": "finalize failed"}), 500
 
 
+@app.post("/encode_raw")
+def encode_raw():
+    """Accept raw RGB24 frames over HTTP body and encode to MP4 with NVENC.
+    Headers:
+      X-Width: integer width in pixels
+      X-Height: integer height in pixels
+      X-Fps: integer frames per second
+      X-PixFmt: rgb24 (optional; only rgb24 supported)
+    Body: concatenated raw frames (H*W*3 bytes per frame), unknown length allowed.
+    Response: video/mp4 (binary), with Content-Length when available.
+    """
+    if not nvenc_ready_cached():
+        return jsonify({"error": "NVENC not ready"}), 503
+
+    try:
+        w = int(request.headers.get("X-Width", "0"))
+        h = int(request.headers.get("X-Height", "0"))
+        fps = int(request.headers.get("X-Fps", "30"))
+        pix = (request.headers.get("X-PixFmt", "rgb24")).lower()
+    except Exception:
+        return jsonify({"error": "invalid headers"}), 400
+    if w <= 0 or h <= 0 or fps <= 0:
+        return jsonify({"error": "invalid dimensions/fps"}), 400
+    if pix != "rgb24":
+        return jsonify({"error": "only rgb24 supported"}), 415
+
+    sdir = _ensure_sessions_dir() / ("raw-" + uuid.uuid4().hex)
+    try:
+        sdir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    out_mp4 = sdir / "out.mp4"
+
+    # Build ffmpeg command: stdin rawvideo → MP4 NVENC file
+    cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "warning",
+        "-y",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "rgb24",
+        "-s",
+        f"{w}x{h}",
+        "-r",
+        str(fps),
+        "-i",
+        "pipe:0",
+        *get_ffmpeg_args(fps),
+        str(out_mp4),
+    ]
+
+    app.logger.info("encode_raw: starting ffmpeg %s", " ".join(cmd))
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            bufsize=0,
+        )
+    except Exception as e:
+        app.logger.exception("encode_raw: failed to start ffmpeg: %s", e)
+        return jsonify({"error": "ffmpeg start failed"}), 500
+
+    # Stream request body into ffmpeg stdin
+    bytes_in = 0
+    try:
+        stream = request.stream
+        while True:
+            chunk = stream.read(1024 * 1024)
+            if not chunk:
+                break
+            bytes_in += len(chunk)
+            try:
+                proc.stdin.write(chunk)  # type: ignore
+            except BrokenPipeError:
+                break
+    except Exception as e:
+        app.logger.exception("encode_raw: read/write error: %s", e)
+    finally:
+        try:
+            if proc.stdin:
+                proc.stdin.close()
+        except Exception:
+            pass
+
+    rc = proc.wait(timeout=1800)
+    if rc != 0 or not out_mp4.exists():
+        try:
+            out = (
+                proc.stdout.read().decode("utf-8", errors="ignore")
+                if proc.stdout
+                else ""
+            )
+            err = (
+                proc.stderr.read().decode("utf-8", errors="ignore")
+                if proc.stderr
+                else ""
+            )
+        except Exception:
+            out = err = ""
+        app.logger.error(
+            "encode_raw: ffmpeg failed rc=%s in_bytes=%s stdout=%s stderr=%s",
+            rc,
+            bytes_in,
+            out,
+            err,
+        )
+        return jsonify({"error": "ffmpeg failed"}), 500
+
+    app.logger.info(
+        "encode_raw: ok bytes_in=%s out_bytes=%s", bytes_in, out_mp4.stat().st_size
+    )
+
+    def _iter_out():
+        with open(out_mp4, "rb") as f:
+            while True:
+                b = f.read(1024 * 1024)
+                if not b:
+                    break
+                yield b
+
+    resp = Response(_iter_out(), mimetype="video/mp4")
+    try:
+        resp.headers["Content-Length"] = str(out_mp4.stat().st_size)
+    except Exception:
+        pass
+    resp.headers["Connection"] = "close"
+    return resp
+
+
 def _safe_cleanup_session(sid: str):
     meta = SESSIONS.pop(sid, None)
     if not meta:
