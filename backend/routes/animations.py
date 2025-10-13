@@ -15,6 +15,7 @@ from backend.services.encoding import encode_animation
 from backend.services.system import log_mem
 from backend.services.visuals import create_bar_animation_wrapper
 from src.visuals import image_cache
+from src.visuals.core.constants import dpi as DEFAULT_VIS_DPI
 
 bp = Blueprint("animations", __name__)
 
@@ -34,7 +35,7 @@ def generate_animation():
     - days (int, optional): Interpolation window size. Defaults to 30.
     - interp_steps (int, optional): Steps between points. Defaults to 14.
     - period (str, optional): Resample period (e.g., 'd', 'M'). Defaults to 'd'.
-    - dpi (int, optional): Figure DPI for frames. Defaults to 10.
+    - dpi (int, optional): Figure DPI for frames. Defaults to visuals constant.
     - figsize (tuple[float, float], optional): Figure size in inches.
 
     Returns:
@@ -56,7 +57,8 @@ def generate_animation():
         days = data.get("days", 30)
         interp_steps = data.get("interp_steps", 14)
         period = data.get("period", "d")
-        dpi = data.get("dpi", 10)
+        # Align default DPI with visuals constants for consistent runs
+        dpi = int(data.get("dpi", DEFAULT_VIS_DPI))
         figsize = data.get("figsize", (16, 21.2))
 
         t1 = time.time()

@@ -3,6 +3,7 @@ This module provides functions to create a bar chart animation for Spotify data 
 It includes functions to set up the animation, process data, and handle image fetching and caching.
 """
 
+import logging
 import os
 import textwrap
 import time
@@ -45,6 +46,8 @@ warnings.filterwarnings(
     "ignore",
     category=UserWarning,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def preload_images_batch(
@@ -370,8 +373,13 @@ def create_bar_animation(
     try:
         _fw, _fh = fig.get_figwidth(), fig.get_figheight()
         _pw, _ph = int(round(_fw * fig.dpi)), int(round(_fh * fig.dpi))
-        print(
-            f"[DEBUG] figure: dpi={fig.dpi} figsize=({_fw:.2f},{_fh:.2f}) pixels={_pw}x{_ph}"
+        logger.info(
+            "visuals: figure dpi=%s figsize=(%.2f,%.2f) pixels=%sx%s",
+            fig.dpi,
+            _fw,
+            _fh,
+            _pw,
+            _ph,
         )
     except Exception:
         pass

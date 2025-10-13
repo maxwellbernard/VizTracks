@@ -11,3 +11,5 @@ period: str = "d"
 
 # Resampling filter for image resizing
 RESAMPLING_FILTER = Image.Resampling.BILINEAR
+
+DEFAULT_VIS_DPI = 30
