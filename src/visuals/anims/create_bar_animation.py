@@ -432,6 +432,25 @@ def create_bar_animation(
     t4 = time.time()
     print(f"Time for precomputing data: {t4 - t3:.2f} seconds")
 
+    # Set static axes config once to avoid invalidating the background each frame
+    try:
+        global_max_width = 0.0
+        for fd in precomputed_data.values():
+            if fd.get("widths"):
+                mw = max(fd["widths"]) if fd["widths"] else 0
+                if mw > global_max_width:
+                    global_max_width = float(mw)
+        if global_max_width <= 0:
+            global_max_width = 1.0
+        ax.set_xlim(0, global_max_width * 1.1)
+        ax.set_yticks([])
+        try:
+            ax.set_autoscale_on(False)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
     # Image scaling and positioning
     top_n_scale_mapping_height = {
         1: 70,
@@ -975,10 +994,7 @@ def create_bar_animation(
         else:
             anim_state.prev_interp_positions = interp_positions[:]
 
-        _t0 = time.perf_counter()
-        ax.set_yticks([])
-        ax.set_xlim(0, max(display_widths) * 1.1)
-        t_axes += time.perf_counter() - _t0
+        # Axis limits and ticks remain static to keep draw cost low
 
         # update year and month text
         year_text.set_text(f"{current_time.year}")

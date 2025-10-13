@@ -123,7 +123,12 @@ def _iter_frames_jpeg(anim, facecolor: str = "#F0F0F0") -> Iterator[bytes]:
 
 
 def _iter_frames_rgb(anim, facecolor: str = "#F0F0F0") -> Iterator[np.ndarray]:
-    """Yield contiguous RGB numpy arrays using Agg renderer."""
+    """Yield contiguous RGB frames using Agg; try blitting for speed.
+
+    If the animation provides a blit-friendly update (artists with animated=True),
+    we cache the background once and only redraw changed artists per frame.
+    Falls back to full canvas.draw() if blitting isn't viable.
+    """
     fig = anim._fig
     try:
         mpl.rcParams["text.antialiased"] = False
@@ -142,7 +147,26 @@ def _iter_frames_rgb(anim, facecolor: str = "#F0F0F0") -> Iterator[np.ndarray]:
 
     frame_idx = 0
 
-    def grab_rgb() -> np.ndarray:
+    # Try to prepare blit background for the main axes if available
+    main_ax = None
+    try:
+        if hasattr(fig, "axes") and fig.axes:
+            main_ax = fig.axes[0]
+    except Exception:
+        main_ax = None
+
+    blit_bg = None
+    use_blit = False
+    try:
+        canvas.draw()
+        if main_ax is not None:
+            blit_bg = canvas.copy_from_bbox(main_ax.bbox)
+            use_blit = True
+            logger.info("perf: blit background cached")
+    except Exception:
+        use_blit = False
+
+    def grab_rgb_full() -> np.ndarray:
         t0 = time.perf_counter()
         canvas.draw()
         t_draw = time.perf_counter() - t0
@@ -152,10 +176,31 @@ def _iter_frames_rgb(anim, facecolor: str = "#F0F0F0") -> Iterator[np.ndarray]:
         buf = np.frombuffer(canvas.buffer_rgba(), dtype=np.uint8).reshape(h, w, 4)
         return buf[:, :, :3].copy(order="C")
 
+    def grab_rgb_blit(artists: list) -> np.ndarray:
+        if not use_blit or blit_bg is None or main_ax is None:
+            return grab_rgb_full()
+        try:
+            canvas.restore_region(blit_bg)
+            for a in artists:
+                try:
+                    main_ax.draw_artist(a)
+                except Exception:
+                    pass
+            canvas.blit(main_ax.bbox)
+        except Exception:
+            return grab_rgb_full()
+        w, h = canvas.get_width_height()
+        buf = np.frombuffer(canvas.buffer_rgba(), dtype=np.uint8).reshape(h, w, 4)
+        return buf[:, :, :3].copy(order="C")
+
     if hasattr(anim, "new_frame_seq"):
         for framedata in anim.new_frame_seq():
-            anim._draw_frame(framedata)
-            rgb = grab_rgb()
+            artists = anim._draw_frame(framedata)
+            # Matplotlib returns list of artists when blit=True paths are used
+            if isinstance(artists, (list, tuple)) and artists:
+                rgb = grab_rgb_blit(list(artists))
+            else:
+                rgb = grab_rgb_full()
             if frame_idx % 200 == 0:
                 logger.info("client: prepared frame %s (rgb)", frame_idx)
             frame_idx += 1
@@ -163,10 +208,13 @@ def _iter_frames_rgb(anim, facecolor: str = "#F0F0F0") -> Iterator[np.ndarray]:
     else:
         while True:
             try:
-                anim._draw_next_frame(frame_idx, blit=True)
+                artists = anim._draw_next_frame(frame_idx, blit=True)
             except StopIteration:
                 break
-            rgb = grab_rgb()
+            if isinstance(artists, (list, tuple)) and artists:
+                rgb = grab_rgb_blit(list(artists))
+            else:
+                rgb = grab_rgb_full()
             if frame_idx % 200 == 0:
                 logger.info("client: prepared frame %s (rgb)", frame_idx)
             frame_idx += 1
