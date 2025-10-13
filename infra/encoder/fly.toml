@@ -36,7 +36,7 @@ primary_region = "ord"
   RENDERER = "agg"
   # Prefer CUDA scaler on Fly (scale_cuda present; NPP not available in this image)
   FFMPEG_SCALER = "cuda"
-  NVENC_PRESET = "p4"
+  NVENC_PRESET = "p7"
   NVENC_RC = "vbr"
   NVENC_CQ = "22"
   NVENC_LOOKAHEAD = "20"
