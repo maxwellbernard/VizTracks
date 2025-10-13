@@ -367,6 +367,14 @@ def create_bar_animation(
     plt.subplots_adjust(left=0.27, right=0.85, top=0.8, bottom=0.13)
     t1 = time.time()
     print(f"Time for figure setup: {t1 - t0:.2f} seconds")
+    try:
+        _fw, _fh = fig.get_figwidth(), fig.get_figheight()
+        _pw, _ph = int(round(_fw * fig.dpi)), int(round(_fh * fig.dpi))
+        print(
+            f"[DEBUG] figure: dpi={fig.dpi} figsize=({_fw:.2f},{_fh:.2f}) pixels={_pw}x{_ph}"
+        )
+    except Exception:
+        pass
     font_prop_heading, font_path_labels = get_fonts()
     title_map = {
         ("artist_name", "Streams"): "Most Played Artists",
