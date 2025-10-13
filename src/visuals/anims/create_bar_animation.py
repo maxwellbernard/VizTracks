@@ -719,6 +719,38 @@ def create_bar_animation(
         va="top",
     )
 
+    # Gather all dynamic artists that we update each frame; used for blitting
+    dynamic_artists = []
+    try:
+        dynamic_artists.extend(list(bars))
+    except Exception:
+        pass
+    dynamic_artists.extend(text_objects)
+    dynamic_artists.extend(label_objects)
+    dynamic_artists.extend(artist_label_objects)
+    dynamic_artists.extend(image_annotations)
+    dynamic_artists.append(year_text)
+    dynamic_artists.append(month_text)
+
+    def init():
+        # Minimal init for blitting; keep everything hidden initially
+        try:
+            for b in bars:
+                b.set_visible(False)
+        except Exception:
+            pass
+        for t in text_objects:
+            t.set_visible(False)
+        for lbl in label_objects:
+            lbl.set_visible(False)
+        for al in artist_label_objects:
+            al.set_visible(False)
+        for ab in image_annotations:
+            ab.set_visible(False)
+        year_text.set_visible(True)
+        month_text.set_visible(True)
+        return dynamic_artists
+
     interp_steps = interp_steps
 
     initial_top_sorted = (
@@ -775,7 +807,7 @@ def create_bar_animation(
         """Quadratic ease-in-out function to handle smooth transitions."""
         return t * t * (3 - 2 * t)
 
-    def animate(frame) -> None:
+    def animate(frame):
         """Update the bar chart for each frame."""
         nonlocal anim_state
         t_frame_start = time.perf_counter()
@@ -1069,6 +1101,8 @@ def create_bar_animation(
             print(
                 f"[TIMING] frame={frame} bars={t_bars:.4f}s texts={t_texts:.4f}s images={t_images:.4f}s axes={t_axes:.4f}s total={t_total:.4f}s"
             )
+        # Return the list of artists for blitting
+        return dynamic_artists
 
     t7 = time.time()
     print(f"Time for animation setup: {t7 - t6:.2f} seconds")
@@ -1076,6 +1110,8 @@ def create_bar_animation(
         fig,
         animate,
         frames=total_frames,
+        init_func=init,
+        blit=True,
         interval=1,
         repeat=False,
     )
