@@ -33,6 +33,6 @@ primary_region = 'arn'
   JPEG_SUBSAMPLE = "1"
   RENDERER = "agg"
   # Draw-time cap to keep pixel count modest; encoder will upscale
-  RENDER_MAX_WIDTH = "960"
-  RENDER_MAX_HEIGHT = "1272"
+  RENDER_MAX_WIDTH = "720"
+  RENDER_MAX_HEIGHT = "0"
   FFMPEG_SCALER = "cpu"
