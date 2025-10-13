@@ -1,6 +1,5 @@
 import base64
 import gc
-import os
 import tempfile
 import time
 
@@ -75,13 +74,56 @@ def generate_animation():
             ), 400
 
         t3 = time.time()
+        # Optional render downscale: keep pixel count modest for faster draw
+        try:
+            import os
+
+            max_w = int(os.getenv("RENDER_MAX_WIDTH", "0"))
+            max_h = int(os.getenv("RENDER_MAX_HEIGHT", "0"))
+        except Exception:
+            max_w = max_h = 0
+
+        eff_dpi = dpi
+        upscale_target = None
+        try:
+            if isinstance(figsize, (list, tuple)) and len(figsize) == 2:
+                px_w = float(figsize[0]) * float(dpi)
+                px_h = float(figsize[1]) * float(dpi)
+                scale = 1.0
+                factors = []
+                if max_w and px_w > max_w:
+                    factors.append(max_w / px_w)
+                if max_h and px_h > max_h:
+                    factors.append(max_h / px_h)
+                if factors:
+                    scale = max(min(factors), 0.1)
+                eff_dpi = max(1.0, float(dpi) * scale)
+                if eff_dpi != dpi:
+                    print(
+                        f"Render downscale: dpi {dpi} -> {eff_dpi:.2f} (px ~ {px_w:.0f}x{px_h:.0f}) max=({max_w or '-'}x{max_h or '-'})"
+                    )
+                    # Ask encoder to scale back to the original figure pixel size (no padding)
+                    try:
+                        ow = int(round(px_w))
+                        oh = int(round(px_h))
+                        # ensure even for yuv420p
+                        if ow % 2 == 1:
+                            ow += 1
+                        if oh % 2 == 1:
+                            oh += 1
+                        upscale_target = (ow, oh)
+                    except Exception:
+                        upscale_target = None
+        except Exception:
+            pass
+
         anim = create_bar_animation_wrapper(
             df,
             top_n,
             analysis_metric,
             selected_attribute,
             period,
-            dpi,
+            eff_dpi,
             days,
             interp_steps,
             start_date,
@@ -97,7 +139,7 @@ def generate_animation():
             temp_path = temp_file.name
         if ENCODER_URL:
             print(f"Using remote encoder at {ENCODER_URL}")
-        encode_animation(anim, temp_path, fps)
+        encode_animation(anim, temp_path, fps, target=upscale_target)
         with open(temp_path, "rb") as f:
             video_bytes = f.read()
         os.remove(temp_path)

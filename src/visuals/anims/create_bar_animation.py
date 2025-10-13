@@ -367,6 +367,15 @@ def create_bar_animation(
     plt.subplots_adjust(left=0.27, right=0.85, top=0.8, bottom=0.13)
     t1 = time.time()
     print(f"Time for figure setup: {t1 - t0:.2f} seconds")
+    # One-time figure resolution debug
+    try:
+        _fw, _fh = fig.get_figwidth(), fig.get_figheight()
+        _pw, _ph = int(round(_fw * fig.dpi)), int(round(_fh * fig.dpi))
+        print(
+            f"[DEBUG] figure: dpi={fig.dpi} figsize=({_fw:.2f},{_fh:.2f}) pixels={_pw}x{_ph}"
+        )
+    except Exception:
+        pass
     font_prop_heading, font_path_labels = get_fonts()
     title_map = {
         ("artist_name", "Streams"): "Most Played Artists",
@@ -431,6 +440,25 @@ def create_bar_animation(
     )
     t4 = time.time()
     print(f"Time for precomputing data: {t4 - t3:.2f} seconds")
+
+    # Set static axes config once to avoid invalidating the background each frame
+    try:
+        global_max_width = 0.0
+        for fd in precomputed_data.values():
+            if fd.get("widths"):
+                mw = max(fd["widths"]) if fd["widths"] else 0
+                if mw > global_max_width:
+                    global_max_width = float(mw)
+        if global_max_width <= 0:
+            global_max_width = 1.0
+        ax.set_xlim(0, global_max_width * 1.1)
+        ax.set_yticks([])
+        try:
+            ax.set_autoscale_on(False)
+        except Exception:
+            pass
+    except Exception:
+        pass
 
     # Image scaling and positioning
     top_n_scale_mapping_height = {
@@ -500,6 +528,12 @@ def create_bar_animation(
         edgecolor="#D3D3D3",
         linewidth=1.2,
     )
+    try:
+        for b in bars:
+            b.set_zorder(5)
+            b.set_animated(True)
+    except Exception:
+        pass
     ax.set_yticks([])
     ax.tick_params(axis="y", which="both", length=0, pad=15)
     ax.xaxis.label.set_fontproperties(font_path_labels)
@@ -553,6 +587,10 @@ def create_bar_animation(
             visible=False,
         )
         text_objects.append(text_obj)
+        try:
+            text_obj.set_animated(True)
+        except Exception:
+            pass
 
         # y-axis labels
         label_obj = ax.text(
@@ -566,6 +604,11 @@ def create_bar_animation(
             visible=False,
         )
         label_objects.append(label_obj)
+        try:
+            label_obj.set_zorder(9)
+            label_obj.set_animated(True)
+        except Exception:
+            pass
 
         # y-axis labels subtext
         artist_obj = ax.text(
@@ -580,6 +623,11 @@ def create_bar_animation(
             visible=False,
         )
         artist_label_objects.append(artist_obj)
+        try:
+            artist_obj.set_zorder(9)
+            artist_obj.set_animated(True)
+        except Exception:
+            pass
 
         # Pre-create OffsetImage and AnnotationBbox for each bar
         offset_img = OffsetImage(blank_img, zoom=1)
@@ -599,8 +647,44 @@ def create_bar_animation(
             ),
         )
         ax.add_artist(ab)
+        # Ensure images render above axes/spines and aren't clipped at the y-axis
+        try:
+            ab.set_zorder(10)
+            ab.set_clip_on(False)
+            ab.set_animated(True)
+        except Exception:
+            pass
         image_annotations.append(ab)
         offset_images.append(offset_img)
+
+    # Compute a minimum x (in data units) so the avatar placed with xybox offset
+    # never crosses the y-axis (x=0). Convert the left offset in points/pixels
+    # plus half image width to a data-space clearance.
+    def _compute_min_image_anchor_x() -> float:
+        try:
+            # Image width in points for zoom=1
+            img_w_pts = (target_size * 72.0 / float(fig.dpi)) * 1.0
+            # xybox is in points; left shift is negative
+            left_offset_pts = float(xybox[0]) - (img_w_pts / 2.0)
+            # Convert points to pixels
+            left_offset_px = left_offset_pts * (float(fig.dpi) / 72.0)
+            # Display x position for data x=0
+            x0_disp = ax.transData.transform((0.0, 0.0))[0]
+            # We need the bar/image anchor at a display x such that the image's
+            # left edge is >= the x=0 spine in display coords
+            required_disp_x = x0_disp - left_offset_px
+            # Add a tiny margin (4pt) so it doesn't visually touch the spine
+            margin_px = 4.0 * (float(fig.dpi) / 72.0)
+            required_disp_x += margin_px
+            # Convert back to data units
+            min_data_x = ax.transData.inverted().transform((required_disp_x, 0.0))[0]
+            return max(0.0, float(min_data_x))
+        except Exception:
+            # Fallback: 5% of the x range
+            xmin, xmax = ax.get_xlim()
+            return max(0.0, xmin + 0.05 * (xmax - xmin))
+
+    min_image_anchor_x = _compute_min_image_anchor_x()
 
     # Add year and month text boxes
     year_text = ax.text(
@@ -623,6 +707,13 @@ def create_bar_animation(
         bbox=dict(facecolor="#F0F0F0", edgecolor="none", alpha=0.7),
         color="#A9A9A9",
     )
+    try:
+        year_text.set_zorder(9)
+        month_text.set_zorder(9)
+        year_text.set_animated(True)
+        month_text.set_animated(True)
+    except Exception:
+        pass
     # x-axis label for clarity
     ax.text(
         0.38,
@@ -636,6 +727,38 @@ def create_bar_animation(
         ha="center",
         va="top",
     )
+
+    # Gather all dynamic artists that we update each frame; used for blitting
+    dynamic_artists = []
+    try:
+        dynamic_artists.extend(list(bars))
+    except Exception:
+        pass
+    dynamic_artists.extend(text_objects)
+    dynamic_artists.extend(label_objects)
+    dynamic_artists.extend(artist_label_objects)
+    dynamic_artists.extend(image_annotations)
+    dynamic_artists.append(year_text)
+    dynamic_artists.append(month_text)
+
+    def init():
+        # Minimal init for blitting; keep everything hidden initially
+        try:
+            for b in bars:
+                b.set_visible(False)
+        except Exception:
+            pass
+        for t in text_objects:
+            t.set_visible(False)
+        for lbl in label_objects:
+            lbl.set_visible(False)
+        for al in artist_label_objects:
+            al.set_visible(False)
+        for ab in image_annotations:
+            ab.set_visible(False)
+        year_text.set_visible(True)
+        month_text.set_visible(True)
+        return dynamic_artists
 
     interp_steps = interp_steps
 
@@ -686,14 +809,18 @@ def create_bar_animation(
             if img_data and img_data["color"]:
                 bars[i].set_facecolor(np.array(img_data["color"]) / 255)
 
-    total_frames = len(timestamps) * interp_steps
+    if not timestamps:
+        # No frames to animate; create a 1-frame no-op animation to avoid errors
+        total_frames = 1
+    else:
+        total_frames = len(timestamps) * interp_steps
     print(f"Total frames: {total_frames}")
 
     def quadratic_ease_in_out(t) -> float:
         """Quadratic ease-in-out function to handle smooth transitions."""
         return t * t * (3 - 2 * t)
 
-    def animate(frame) -> None:
+    def animate(frame):
         """Update the bar chart for each frame."""
         nonlocal anim_state
         t_frame_start = time.perf_counter()
@@ -701,7 +828,12 @@ def create_bar_animation(
         t_texts = 0.0
         t_images = 0.0
         t_axes = 0.0
+        # Clamp to valid timestamp index to avoid off-by-one
+        if not timestamps:
+            return dynamic_artists
         main_frame = frame // interp_steps
+        if main_frame >= len(timestamps):
+            main_frame = len(timestamps) - 1
         sub_step = frame % interp_steps
         current_time = timestamps[main_frame]
 
@@ -770,8 +902,7 @@ def create_bar_animation(
 
         max_width = max(interp_widths) if interp_widths else 1
 
-        # this section ensures that the minimum bar width is applied
-        # and the image does not go below 0 on the x-axis
+        # Ensure a minimum bar width so the avatar is fully to the right of x=0
         min_bar_width_mapping = {
             1: 0.30,
             2: 0.54,
@@ -792,10 +923,12 @@ def create_bar_animation(
 
         for i, width in enumerate(interp_widths):
             name = names[i] if i < len(names) else ""
-            has_data = width > 0 and name
+            has_data = (width > 0) and bool(name)
 
             if has_data:
-                display_widths.append(max(width, min_bar_width))
+                # Clamp width by both the global min bar width and the
+                # minimum image anchor x to keep the avatar on-screen.
+                display_widths.append(max(width, min_bar_width, min_image_anchor_x))
                 active_bars.append(True)
             else:
                 display_widths.append(0)
@@ -840,6 +973,24 @@ def create_bar_animation(
         else:
             label_fontsize = 22
 
+        # Compute a tiny left margin using points→data conversion so labels
+        # appear almost flush with the y-axis like before, but remain inside
+        # the axes to prevent blit ghosts.
+        def _points_to_data_x(pts: float) -> float:
+            try:
+                x0_disp = ax.transData.transform((0.0, 0.0))[0]
+                dx_px = float(pts) * (float(fig.dpi) / 72.0)
+                x_disp = x0_disp + dx_px
+                x_data = ax.transData.inverted().transform((x_disp, 0.0))[0]
+                return max(0.0, float(x_data))
+            except Exception:
+                # Fallback to a small fraction of the range
+                x_min, x_max = ax.get_xlim()
+                return max(0.0, (x_max - x_min) * 0.003)
+
+        # ~4pt inside the axis
+        left_margin = _points_to_data_x(4.0)
+
         for i in range(top_n):
             name = names[i] if i < len(names) else ""
             text_x = display_widths[i]
@@ -869,7 +1020,12 @@ def create_bar_animation(
                 # Update main label text with proper formatting
                 if i < len(labels) and labels[i]:
                     _t0 = time.perf_counter()
-                    label_objects[i].set_position((-offset, bar_center_y))
+                    # Anchor just inside the y-axis, right-aligned (matches old look)
+                    label_objects[i].set_position((left_margin, bar_center_y))
+                    try:
+                        label_objects[i].set_clip_on(True)
+                    except Exception:
+                        pass
                     label_objects[i].set_text(labels[i])
                     label_objects[i].set_fontsize(label_fontsize)
                     label_objects[i].set_visible(True)
@@ -903,8 +1059,12 @@ def create_bar_animation(
 
                         _t0 = time.perf_counter()
                         artist_label_objects[i].set_position(
-                            (-offset, bar_center_y - artist_y_offset)
+                            (left_margin, bar_center_y - artist_y_offset)
                         )
+                        try:
+                            artist_label_objects[i].set_clip_on(True)
+                        except Exception:
+                            pass
                         artist_label_objects[i].set_text(artist_wrapped)
                         artist_label_objects[i].set_fontsize(label_fontsize - 2)
                         artist_label_objects[i].set_visible(True)
@@ -975,10 +1135,7 @@ def create_bar_animation(
         else:
             anim_state.prev_interp_positions = interp_positions[:]
 
-        _t0 = time.perf_counter()
-        ax.set_yticks([])
-        ax.set_xlim(0, max(display_widths) * 1.1)
-        t_axes += time.perf_counter() - _t0
+        # Axis limits and ticks remain static to keep draw cost low
 
         # update year and month text
         year_text.set_text(f"{current_time.year}")
@@ -989,6 +1146,8 @@ def create_bar_animation(
             print(
                 f"[TIMING] frame={frame} bars={t_bars:.4f}s texts={t_texts:.4f}s images={t_images:.4f}s axes={t_axes:.4f}s total={t_total:.4f}s"
             )
+        # Return the list of artists for blitting
+        return dynamic_artists
 
     t7 = time.time()
     print(f"Time for animation setup: {t7 - t6:.2f} seconds")
@@ -996,6 +1155,8 @@ def create_bar_animation(
         fig,
         animate,
         frames=total_frames,
+        init_func=init,
+        blit=True,
         interval=1,
         repeat=False,
     )
