@@ -32,8 +32,13 @@ import streamlit as st
 
 from src.data.normalize_inputs import normalize_inputs
 from src.services.supabase_client import supabase
-from src.visuals.anims.create_bar_animation import (days, dpi, figsize,
-                                                    interp_steps, period)
+from src.visuals.anims.create_bar_animation import (
+    days,
+    dpi,
+    figsize,
+    interp_steps,
+    period,
+)
 
 st.set_page_config(
     page_title="Viztrack Studio",
@@ -1047,12 +1052,6 @@ footer = """
     font-family: Arial, sans-serif;
     margin-top: 70px;
 }
-</style>
-<div class="footer">
-    Disclaimer: Spotify is a registered trademark of Spotify AB. This app is a third-party tool that uses Spotify data and is not affiliated with or endorsed by Spotify.
-</div>
-"""
-st.markdown(footer, unsafe_allow_html=True)
 </style>
 <div class="footer">
     Disclaimer: Spotify is a registered trademark of Spotify AB. This app is a third-party tool that uses Spotify data and is not affiliated with or endorsed by Spotify.
