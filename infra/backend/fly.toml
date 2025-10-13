@@ -34,5 +34,5 @@ primary_region = 'arn'
   RENDERER = "agg"
   # Draw-time cap to keep pixel count modest; encoder will upscale
   RENDER_MAX_WIDTH = "960"
-  RENDER_MAX_HEIGHT = "540"
+  RENDER_MAX_HEIGHT = "1272"
   FFMPEG_SCALER = "cpu"
