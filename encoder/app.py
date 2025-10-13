@@ -458,6 +458,21 @@ def encode_raw():
         pass
     out_mp4 = sdir / "out.mp4"
 
+    # If no target provided in headers, optionally honor encoder env OUTPUT_WIDTH/HEIGHT as defaults
+    if (tgt_w <= 0 or tgt_h <= 0):
+        try:
+            env_tw = int(os.getenv("OUTPUT_WIDTH", "0"))
+            env_th = int(os.getenv("OUTPUT_HEIGHT", "0"))
+            if env_tw > 0 and env_th > 0:
+                tgt_w, tgt_h = env_tw, env_th
+                app.logger.info(
+                    "encode_raw: using encoder default target %dx%d from env",
+                    tgt_w,
+                    tgt_h,
+                )
+        except Exception:
+            pass
+
     # Enforce even dimensions for yuv420p
     if "tgt_w" in locals() and tgt_w > 0 and (tgt_w % 2 == 1):
         tgt_w += 1
