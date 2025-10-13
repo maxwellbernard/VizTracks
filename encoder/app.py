@@ -130,6 +130,20 @@ def get_ffmpeg_args(fps: int) -> list[str]:
     aq_strength = os.getenv("NVENC_AQ_STRENGTH", "8")
     bframes = os.getenv("NVENC_BFRAMES", "3")
     profile = os.getenv("NVENC_PROFILE", "high")
+    multipass = os.getenv("NVENC_MULTIPASS", "").lower()  # "qres" | "fullres" | ""
+
+    # Sanitize deprecated *_hq RC with P1..P7 presets: map to modern equivalents
+    # vbr_hq -> vbr + multipass (if not set), cbr_hq -> cbr + multipass
+    if rc in ("vbr_hq", "cbr_hq"):
+        app.logger.info(
+            "NVENC_RC=%s is deprecated; mapping to modern mode with -multipass", rc
+        )
+        if rc == "vbr_hq":
+            rc = "vbr"
+        else:
+            rc = "cbr"
+        if multipass == "":
+            multipass = "fullres"
 
     args: list[str] = [
         "-c:v",
@@ -170,6 +184,8 @@ def get_ffmpeg_args(fps: int) -> list[str]:
         args += ["-spatial-aq", "1", "-aq-strength", aq_strength]
     if temporal_aq in ("1", "true", "True"):
         args += ["-temporal-aq", "1"]
+    if multipass in ("qres", "fullres"):
+        args += ["-multipass", multipass]
 
     # Compatibility and container
     args += [
