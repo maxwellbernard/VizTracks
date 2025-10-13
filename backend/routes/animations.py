@@ -84,6 +84,7 @@ def generate_animation():
             max_w = max_h = 0
 
         eff_dpi = dpi
+        upscale_target = None
         try:
             if isinstance(figsize, (list, tuple)) and len(figsize) == 2:
                 px_w = float(figsize[0]) * float(dpi)
@@ -101,6 +102,18 @@ def generate_animation():
                     print(
                         f"Render downscale: dpi {dpi} -> {eff_dpi:.2f} (px ~ {px_w:.0f}x{px_h:.0f}) max=({max_w or '-'}x{max_h or '-'})"
                     )
+                    # Ask encoder to scale back to the original figure pixel size (no padding)
+                    try:
+                        ow = int(round(px_w))
+                        oh = int(round(px_h))
+                        # ensure even for yuv420p
+                        if ow % 2 == 1:
+                            ow += 1
+                        if oh % 2 == 1:
+                            oh += 1
+                        upscale_target = (ow, oh)
+                    except Exception:
+                        upscale_target = None
         except Exception:
             pass
 
@@ -126,7 +139,7 @@ def generate_animation():
             temp_path = temp_file.name
         if ENCODER_URL:
             print(f"Using remote encoder at {ENCODER_URL}")
-        encode_animation(anim, temp_path, fps)
+        encode_animation(anim, temp_path, fps, target=upscale_target)
         with open(temp_path, "rb") as f:
             video_bytes = f.read()
         os.remove(temp_path)

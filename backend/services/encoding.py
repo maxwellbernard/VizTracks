@@ -469,7 +469,9 @@ def _encode_remote(anim, out_path: str, fps: int) -> bool:
         return False
 
 
-def _encode_raw(anim, out_path: str, fps: int) -> None:
+def _encode_raw(
+    anim, out_path: str, fps: int, target: Optional[tuple[int, int]] = None
+) -> None:
     """Stream raw RGB frames to the encoder's /encode_raw endpoint and save MP4."""
     if not ENCODER_URL:
         raise RuntimeError("ENCODER_URL not set; GPU encoder required")
@@ -520,21 +522,29 @@ def _encode_raw(anim, out_path: str, fps: int) -> None:
             yield arr.tobytes()
             idx += 1
 
-    # Optional upscale target: if OUTPUT_WIDTH/HEIGHT are set, request encoder scaling
+    # Optional upscale target: prefer explicit target, else env OUTPUT_* if set
     tgt_w = None
     tgt_h = None
-    try:
-        ow = int(os.getenv("OUTPUT_WIDTH", "0"))
-        oh = int(os.getenv("OUTPUT_HEIGHT", "0"))
+    if target and len(target) == 2:
+        ow, oh = int(target[0]), int(target[1])
         if ow > 0 and oh > 0 and (ow != w or oh != h):
-            # enforce even dims for yuv420p
             if ow % 2 == 1:
                 ow += 1
             if oh % 2 == 1:
                 oh += 1
             tgt_w, tgt_h = ow, oh
-    except Exception:
-        tgt_w = tgt_h = None
+    else:
+        try:
+            ow = int(os.getenv("OUTPUT_WIDTH", "0"))
+            oh = int(os.getenv("OUTPUT_HEIGHT", "0"))
+            if ow > 0 and oh > 0 and (ow != w or oh != h):
+                if ow % 2 == 1:
+                    ow += 1
+                if oh % 2 == 1:
+                    oh += 1
+                tgt_w, tgt_h = ow, oh
+        except Exception:
+            tgt_w = tgt_h = None
 
     headers = {
         "Content-Type": "application/octet-stream",
@@ -578,7 +588,9 @@ def _encode_raw(anim, out_path: str, fps: int) -> None:
         logger.info("client: raw encode ok bytes=%.2f MiB", total / (1024 * 1024))
 
 
-def encode_animation(anim, out_path: str, fps: int) -> None:
+def encode_animation(
+    anim, out_path: str, fps: int, target: Optional[tuple[int, int]] = None
+) -> None:
     """
     Remote GPU encoder only (no CPU fallback).
     Raises on failure.
@@ -587,7 +599,7 @@ def encode_animation(anim, out_path: str, fps: int) -> None:
     try:
         logger.info("client: encode_animation start fps=%s out=%s", fps, out_path)
         # Use raw streaming path by default
-        _encode_raw(anim, out_path, fps)
+        _encode_raw(anim, out_path, fps, target)
     finally:
         try:
             if fig is not None:

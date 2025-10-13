@@ -459,7 +459,7 @@ def encode_raw():
     out_mp4 = sdir / "out.mp4"
 
     # If no target provided in headers, optionally honor encoder env OUTPUT_WIDTH/HEIGHT as defaults
-    if (tgt_w <= 0 or tgt_h <= 0):
+    if tgt_w <= 0 or tgt_h <= 0:
         try:
             env_tw = int(os.getenv("OUTPUT_WIDTH", "0"))
             env_th = int(os.getenv("OUTPUT_HEIGHT", "0"))
@@ -513,7 +513,7 @@ def encode_raw():
             os.getenv("FFMPEG_SCALER"),
             scaler_choice,
         )
-        # Compute aspect-preserving fit inside target, then pad to exact target
+        # Compute aspect-preserving fit inside target, with optional padding to exact target
         try:
             s = min(tgt_w / float(w), tgt_h / float(h))
         except Exception:
@@ -526,37 +526,64 @@ def encode_raw():
             fit_h -= 1
         fit_w = min(fit_w, tgt_w - (tgt_w % 2))
         fit_h = min(fit_h, tgt_h - (tgt_h % 2))
+        # Determine if aspect matches target closely (avoid padding when true)
+        try:
+            same_aspect = abs((tgt_w * h) - (tgt_h * w)) <= max(tgt_w, tgt_h)
+        except Exception:
+            same_aspect = False
         app.logger.info(
-            "encode_raw: fit %dx%d within %dx%d (input %dx%d)",
+            "encode_raw: fit %dx%d within %dx%d (input %dx%d) same_aspect=%s",
             fit_w,
             fit_h,
             tgt_w,
             tgt_h,
             w,
             h,
+            same_aspect,
         )
-        if scaler_choice == "npp":
-            vf = (
-                f"format=nv12,hwupload_cuda,"
-                f"scale_npp={fit_w}:{fit_h}:interp_algo=lanczos:format=nv12,"
-                f"hwdownload,format=nv12,"
-                f"pad={tgt_w}:{tgt_h}:(ow-iw)/2:(oh-ih)/2,setsar=1"
-            )
-            cmd += ["-vf", vf]
-        elif scaler_choice == "cuda":
-            vf = (
-                f"format=nv12,hwupload_cuda,"
-                f"scale_cuda={fit_w}:{fit_h}:format=nv12,"
-                f"hwdownload,format=nv12,"
-                f"pad={tgt_w}:{tgt_h}:(ow-iw)/2:(oh-ih)/2,setsar=1"
-            )
-            cmd += ["-vf", vf]
+        if same_aspect:
+            # Direct scale to the exact target size (no padding needed)
+            if scaler_choice == "npp":
+                vf = (
+                    f"format=nv12,hwupload_cuda,"
+                    f"scale_npp={tgt_w}:{tgt_h}:interp_algo=lanczos:format=nv12,"
+                    f"setsar=1"
+                )
+                cmd += ["-vf", vf]
+            elif scaler_choice == "cuda":
+                vf = (
+                    f"format=nv12,hwupload_cuda,"
+                    f"scale_cuda={tgt_w}:{tgt_h}:format=nv12,"
+                    f"setsar=1"
+                )
+                cmd += ["-vf", vf]
+            else:
+                vf = f"scale={tgt_w}:{tgt_h}:flags=lanczos,setsar=1"
+                cmd += ["-vf", vf]
         else:
-            vf = (
-                f"scale={fit_w}:{fit_h}:flags=lanczos,"
-                f"pad={tgt_w}:{tgt_h}:(ow-iw)/2:(oh-ih)/2,setsar=1"
-            )
-            cmd += ["-vf", vf]
+            # Scale to fit and pad to the exact target
+            if scaler_choice == "npp":
+                vf = (
+                    f"format=nv12,hwupload_cuda,"
+                    f"scale_npp={fit_w}:{fit_h}:interp_algo=lanczos:format=nv12,"
+                    f"hwdownload,format=nv12,"
+                    f"pad={tgt_w}:{tgt_h}:(ow-iw)/2:(oh-ih)/2,setsar=1"
+                )
+                cmd += ["-vf", vf]
+            elif scaler_choice == "cuda":
+                vf = (
+                    f"format=nv12,hwupload_cuda,"
+                    f"scale_cuda={fit_w}:{fit_h}:format=nv12,"
+                    f"hwdownload,format=nv12,"
+                    f"pad={tgt_w}:{tgt_h}:(ow-iw)/2:(oh-ih)/2,setsar=1"
+                )
+                cmd += ["-vf", vf]
+            else:
+                vf = (
+                    f"scale={fit_w}:{fit_h}:flags=lanczos,"
+                    f"pad={tgt_w}:{tgt_h}:(ow-iw)/2:(oh-ih)/2,setsar=1"
+                )
+                cmd += ["-vf", vf]
 
     enc_args = get_ffmpeg_args(fps)
     # If using GPU scaler, avoid forcing SW pix_fmt yuv420p which inserts auto_scale
