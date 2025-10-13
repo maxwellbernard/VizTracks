@@ -26,8 +26,8 @@ primary_region = 'arn'
   MIN_UPLOAD_BATCH = "12"
   JPEG_QUALITY = "60"
   # Request final output size (encoder upscales)
-  OUTPUT_WIDTH = "1920"
-  OUTPUT_HEIGHT = "1080"
+  OUTPUT_WIDTH = "0"
+  OUTPUT_HEIGHT = "0"
   OUTPUT_DPI = "60"
   UPLOAD_QUEUE_MAX = "90"
   JPEG_SUBSAMPLE = "1"
