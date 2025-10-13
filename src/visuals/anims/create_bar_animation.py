@@ -964,13 +964,23 @@ def create_bar_animation(
         else:
             label_fontsize = 22
 
-        # Compute a small left margin in data units so labels stay inside axes
-        try:
-            x_min, x_max = ax.get_xlim()
-            x_range = max(1e-6, (x_max - x_min))
-            left_margin = max(0.005 * x_range, 0.02 * max_value)
-        except Exception:
-            left_margin = max(0.02 * max_value, 0.02)
+        # Compute a tiny left margin using points→data conversion so labels
+        # appear almost flush with the y-axis like before, but remain inside
+        # the axes to prevent blit ghosts.
+        def _points_to_data_x(pts: float) -> float:
+            try:
+                x0_disp = ax.transData.transform((0.0, 0.0))[0]
+                dx_px = float(pts) * (float(fig.dpi) / 72.0)
+                x_disp = x0_disp + dx_px
+                x_data = ax.transData.inverted().transform((x_disp, 0.0))[0]
+                return max(0.0, float(x_data))
+            except Exception:
+                # Fallback to a small fraction of the range
+                x_min, x_max = ax.get_xlim()
+                return max(0.0, (x_max - x_min) * 0.003)
+
+        # ~4pt inside the axis
+        left_margin = _points_to_data_x(4.0)
 
         for i in range(top_n):
             name = names[i] if i < len(names) else ""
@@ -1001,7 +1011,7 @@ def create_bar_animation(
                 # Update main label text with proper formatting
                 if i < len(labels) and labels[i]:
                     _t0 = time.perf_counter()
-                    # Keep label text inside axes (avoid x<0 which causes blit ghosting)
+                    # Anchor just inside the y-axis, right-aligned (matches old look)
                     label_objects[i].set_position((left_margin, bar_center_y))
                     try:
                         label_objects[i].set_clip_on(True)

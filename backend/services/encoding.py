@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import requests
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
+from matplotlib.transforms import Bbox
 from PIL import Image
 from requests.adapters import HTTPAdapter, Retry
 from turbojpeg import TJFLAG_FASTDCT, TJPF_RGB, TurboJPEG
@@ -167,9 +168,23 @@ def _iter_frames_rgb(anim, facecolor: str = "#F0F0F0") -> Iterator[np.ndarray]:
     try:
         canvas.draw()
         if main_ax is not None:
-            blit_bg = canvas.copy_from_bbox(main_ax.bbox)
+            # Expand blit region slightly to the left so artists just outside x=0
+            # are safely restored (prevents ghosting when labels sit left of axis).
+            try:
+                extra_left_px = int(os.getenv("BLIT_MARGIN_LEFT", "80"))
+            except Exception:
+                extra_left_px = 80
+            ax_bbox = main_ax.bbox
+            expanded = Bbox.from_extents(
+                ax_bbox.x0 - extra_left_px, ax_bbox.y0, ax_bbox.x1, ax_bbox.y1
+            )
+            blit_bg = canvas.copy_from_bbox(expanded)
+            # Store for later blit
+            blit_area = expanded
             use_blit = True
-            logger.info("perf: blit background cached")
+            logger.info(
+                "perf: blit background cached (expanded left by %spx)", extra_left_px
+            )
     except Exception:
         use_blit = False
 
@@ -188,7 +203,10 @@ def _iter_frames_rgb(anim, facecolor: str = "#F0F0F0") -> Iterator[np.ndarray]:
                     main_ax.draw_artist(a)
                 except Exception:
                     pass
-            canvas.blit(main_ax.bbox)
+            try:
+                canvas.blit(blit_area)
+            except Exception:
+                canvas.blit(main_ax.bbox)
         except Exception:
             raise
         w, h = canvas.get_width_height()
