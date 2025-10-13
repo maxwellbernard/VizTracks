@@ -262,7 +262,6 @@ def _encode_remote(anim, out_path: str, fps: int) -> bool:
                                 q.task_done()
                                 break
 
-                            # Support ndarray or (idx, ndarray)
                             if isinstance(item, tuple) and len(item) >= 2:
                                 idx, arr = item
                             else:
@@ -509,7 +508,6 @@ def _encode_raw(anim, out_path: str, fps: int) -> None:
         else:
             logger.warning("client: encoder health wait timed out")
 
-    # Prime the first frame to get dimensions, after waiting for readiness
     _wait_for_encoder_ready(base)
     frame_iter = _iter_frames_rgb(anim, facecolor="#F0F0F0")
     try:
@@ -523,13 +521,11 @@ def _encode_raw(anim, out_path: str, fps: int) -> None:
     h, w, _ = first.shape
 
     def body() -> TypingIterator[bytes]:
-        # yield first then the rest
         yield first.tobytes()
         idx = 1
         for arr in frame_iter:
             if idx % 200 == 0:
                 logger.info("client: prepared frame %d (raw streaming)", idx)
-            # ensure contiguous
             if not arr.flags.c_contiguous:
                 arr = np.ascontiguousarray(arr)
             yield arr.tobytes()
@@ -574,7 +570,6 @@ def encode_animation(anim, out_path: str, fps: int) -> None:
     fig: Optional[plt.Figure] = getattr(anim, "_fig", None)
     try:
         logger.info("client: encode_animation start fps=%s out=%s", fps, out_path)
-        # Use raw streaming path by default
         _encode_raw(anim, out_path, fps)
     finally:
         try:

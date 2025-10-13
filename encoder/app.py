@@ -186,7 +186,6 @@ def append():
         return jsonify({"error": "too many frames in one batch"}), 413
 
     meta = SESSIONS[sid]
-    # Disallow appends while finalizing or after finalized to avoid corruption
     if meta.get("finalizing"):
         app.logger.warning("append: session=%s is finalizing; rejecting batch", sid)
         return jsonify({"error": "session is finalizing"}), 409
@@ -241,8 +240,7 @@ def finalize():
         return jsonify({"error": "invalid session_id"}), 400
 
     meta = SESSIONS[sid]
-    lock: threading.Lock = meta.get("lock")  # type: ignore
-    # If already finalized and file exists, return it idempotently (streamed)
+    lock: threading.Lock = meta.get("lock")
     sdir_existing: Path = SESSIONS[sid]["dir"]
     out_existing = sdir_existing / "out.mp4"
     if meta.get("finalized") and out_existing.exists():
@@ -263,7 +261,6 @@ def finalize():
         resp.headers["Connection"] = "close"
         return resp
 
-    # Prevent concurrent appends/finalize
     if not lock:
         lock = threading.Lock()
         meta["lock"] = lock
@@ -288,7 +285,6 @@ def finalize():
             resp.headers["Connection"] = "close"
             return resp
         if meta.get("finalizing"):
-            # Another thread is finalizing; brief wait-loop for up to ~10s
             app.logger.info("finalize: session %s already finalizing; waiting", sid)
             waited = 0.0
             while waited < 10.0 and not meta.get("finalized"):
@@ -312,7 +308,6 @@ def finalize():
                     pass
                 resp.headers["Connection"] = "close"
                 return resp
-            # Fallthrough to attempt finalize if still not done
 
         sdir: Path = meta["dir"]
         fps: int = meta["fps"]
@@ -412,7 +407,7 @@ def encode_raw():
         pass
     out_mp4 = sdir / "out.mp4"
 
-    # Build ffmpeg command: stdin rawvideo → MP4 NVENC file
+    # Build ffmpeg command
     cmd = [
         "ffmpeg",
         "-hide_banner",
@@ -447,7 +442,6 @@ def encode_raw():
         app.logger.exception("encode_raw: failed to start ffmpeg: %s", e)
         return jsonify({"error": "ffmpeg start failed"}), 500
 
-    # Stream request body into ffmpeg stdin
     bytes_in = 0
     try:
         stream = request.stream
@@ -457,7 +451,7 @@ def encode_raw():
                 break
             bytes_in += len(chunk)
             try:
-                proc.stdin.write(chunk)  # type: ignore
+                proc.stdin.write(chunk)
             except BrokenPipeError:
                 break
     except Exception as e:

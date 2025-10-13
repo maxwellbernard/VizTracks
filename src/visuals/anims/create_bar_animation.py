@@ -195,9 +195,6 @@ def _download_and_cache_image(task) -> bool:
         color = get_dominant_color(img_resized, name)
         image_cache[cache_key] = {"img": img_resized, "color": color}
         elapsed = time.time() - start_time
-        # print(
-        #     f"[DEBUG] _download_and_cache_image: success for {name} ({elapsed:.2f} seconds)"
-        # )
         return True
     except Exception:
         image_cache[cache_key] = None

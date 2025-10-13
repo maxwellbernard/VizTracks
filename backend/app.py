@@ -10,7 +10,6 @@ from backend.routes.uploads import bp as uploads_bp
 
 
 def _configure_logging() -> None:
-    # Route root/app logs to Gunicorn's error logger handlers when present
     level_name = os.getenv("LOG_LEVEL", "INFO").upper()
     level = getattr(logging, level_name, logging.INFO)
     gunicorn_error = logging.getLogger("gunicorn.error")
@@ -23,7 +22,6 @@ def _configure_logging() -> None:
             level=level,
             format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         )
-    # Quiet noisy loggers if needed
     logging.getLogger("werkzeug").setLevel(logging.WARNING)
 
 

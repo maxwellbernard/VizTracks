@@ -57,7 +57,6 @@ def generate_animation():
         days = data.get("days", 30)
         interp_steps = data.get("interp_steps", 14)
         period = data.get("period", "d")
-        # Force default DPI for consistent runs (ignore client override)
         incoming_dpi = data.get("dpi")
         dpi = int(DEFAULT_VIS_DPI)
         try:
