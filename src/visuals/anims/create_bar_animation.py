@@ -800,7 +800,11 @@ def create_bar_animation(
             if img_data and img_data["color"]:
                 bars[i].set_facecolor(np.array(img_data["color"]) / 255)
 
-    total_frames = len(timestamps) * interp_steps
+    if not timestamps:
+        # No frames to animate; create a 1-frame no-op animation to avoid errors
+        total_frames = 1
+    else:
+        total_frames = len(timestamps) * interp_steps
     print(f"Total frames: {total_frames}")
 
     def quadratic_ease_in_out(t) -> float:
@@ -815,7 +819,12 @@ def create_bar_animation(
         t_texts = 0.0
         t_images = 0.0
         t_axes = 0.0
+        # Clamp to valid timestamp index to avoid off-by-one
+        if not timestamps:
+            return dynamic_artists
         main_frame = frame // interp_steps
+        if main_frame >= len(timestamps):
+            main_frame = len(timestamps) - 1
         sub_step = frame % interp_steps
         current_time = timestamps[main_frame]
 
