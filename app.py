@@ -1,5 +1,5 @@
 """
-Viztrack Studio App — a visualization generator powered by your Spotify data
+VizTracks App — a visualization generator powered by your Spotify history
 Copyright (C) 2025 Maxwell Bernard
 
 
@@ -41,7 +41,7 @@ from src.visuals.anims.create_bar_animation import (
 )
 
 st.set_page_config(
-    page_title="Viztrack Studio",
+    page_title="VizTracks",
     page_icon="🎵",
     layout="wide",
 )
@@ -374,7 +374,7 @@ st.markdown(
                margin-bottom: -1.1em;
                margin-right: -0.5em;
                background-size: 300% 300%;'>
-        Viztrack
+        VizTracks
     </h1>
     <style>
         @keyframes gradient-shift {
@@ -386,31 +386,7 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-st.markdown(
-    """
-    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@700&display=swap" rel="stylesheet">
-    <h1 style='text-align: center;
-               font-family: "Fredoka", sans-serif;
-               font-size: 48px;
-               background: linear-gradient(90deg, #1DB954, #1ED760, #00FFA3, #1DB954);
-               -webkit-background-clip: text;
-               -webkit-text-fill-color: transparent;
-               letter-spacing: 2px;
-               margin-bottom: 0.1em;
-               margin-right: -0.5em;
-               background-size: 300% 300%;'>
-        Studio
-    </h1>
-    <style>
-        @keyframes gradient-shift {
-            0% { background-position: 0% 50%; }
-            50% { background-position: 100% 50%; }
-            100% { background-position: 0% 50%; }
-        }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+
 st.markdown(
     """
     <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@700&display=swap" rel="stylesheet">
@@ -983,7 +959,7 @@ st.markdown(
     """
     This application is open-source and available under the GNU General Public License v3.
 
-    For more details, visit the [GitHub repository](https://github.com/maxwellbernard/viztrack-studio). 
+    For more details, visit the [GitHub repository](https://github.com/maxwellbernard/VizTracks). 
     """,
     unsafe_allow_html=True,
 )
