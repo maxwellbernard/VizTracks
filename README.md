@@ -1,5 +1,7 @@
 # VizTracks App
-👋 Welcome to the VizTracks App! This web app allows you to visualize your Spotify data in a fun and interactive way.
+Welcome to the VizTracks App!
+
+This web app allows you to visualize your Spotify data in a fun and interactive way.
 
 The user has the ability to select how many items they want to visualize, and whether it's artists, songs, or albums. The app generates both static images and animations! 🎵🎵
 
