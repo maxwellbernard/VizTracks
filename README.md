@@ -70,5 +70,5 @@ Please share the app with your friends and family, and let them know about this 
 <br>
 <br>
 
-Created by [Maxwell Bernard](https://github.com/maxwell-bernard)
+Created by [Maxwell Bernard](https://github.com/maxwellbernard)
 October 2025
