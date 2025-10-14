@@ -349,7 +349,7 @@ selected_attribute, analysis_metric = normalize_inputs(
 st.markdown(
     """
     <div style="text-align: center;">
-        <img src="data:image/svg+xml;base64,{}" width="215">
+        <img src="data:image/svg+xml;base64,{}" width="220">
     </div>
     """.format(
         base64.b64encode(
@@ -395,7 +395,7 @@ st.markdown(
                font-size: 22px;
                color: #888888;
                letter-spacing: 1.5px;
-               margin-top: -1.3em;
+               margin-top: -2.5em;
                margin-bottom: 1em;'>
         Interactive visuals powered by your music
     </h1>
