@@ -62,9 +62,12 @@ The web app can be accessed at: [www.viztracks.com](https://www.viztracks.com/)
 <br>
 Please share the app with your friends and family, and let them know about this fun way to visualize their Spotify data!
 
+
+<br>
 <br>
 *Disclaimer: Spotify is a registered trademark of Spotify AB. This app is a third-party tool that uses Spotify data and is not affiliated with or endorsed by Spotify*
 
+<br>
 <br>
 
 Created by [Maxwell Bernard](https://github.com/maxwell-bernard)
