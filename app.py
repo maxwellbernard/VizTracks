@@ -395,7 +395,7 @@ st.markdown(
                font-size: 22px;
                color: #888888;
                letter-spacing: 1.5px;
-               margin-top: -2.5em;
+               margin-top: 3em;
                margin-bottom: 1em;'>
         Interactive visuals powered by your music
     </h1>
