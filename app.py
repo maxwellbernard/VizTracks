@@ -136,6 +136,21 @@ def track_event(event_type: str, metadata: dict = None, count: int = 1):
         else:
             print(f"SUPABASE ERROR: {e}")
 
+if "client_session_id" not in st.session_state:
+    st.session_state.client_session_id = str(uuid.uuid4())
+if "site_visit_tracked" not in st.session_state:
+    st.session_state.site_visit_tracked = False
+if not st.session_state.site_visit_tracked:
+    try:
+        track_event(
+            "site_visit",
+            metadata={
+                "client_session_id": st.session_state.client_session_id,
+            },
+        )
+    finally:
+        st.session_state.site_visit_tracked = True
+
 
 def send_file_to_backend(uploaded_file):
     files = {"file": (uploaded_file.name, uploaded_file, uploaded_file.type)}
@@ -541,7 +556,6 @@ with st.expander("**Click here to see what my visualisations look like!**"):
             "<h5 style='text-align: center;'>Bar Chart Race &nbsp;🎥</h5>",
             unsafe_allow_html=True,
         )
-        # st.video("artist_name_Streams_animation (7).mp4")
         st.video("./assets/visuals/artist_name_Streams_animation_final.mp4")
 
     with col2:
@@ -613,8 +627,6 @@ uploaded_file = st.file_uploader(
 if uploaded_file and not st.session_state.form_values["data_uploaded"]:
     with st.spinner("Crunching your Spotify jams... Hold tight"):
         response = send_file_to_backend(uploaded_file)
-        # st.markdown("Status code:", response.status_code)
-        # st.markdown("Response text:", response.text)
 
     if response.status_code == 200:
         try:
