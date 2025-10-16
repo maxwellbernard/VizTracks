@@ -136,6 +136,7 @@ def track_event(event_type: str, metadata: dict = None, count: int = 1):
         else:
             print(f"SUPABASE ERROR: {e}")
 
+
 if "client_session_id" not in st.session_state:
     st.session_state.client_session_id = str(uuid.uuid4())
 if "site_visit_tracked" not in st.session_state:
@@ -620,15 +621,28 @@ with st.expander(
         st.image("./assets/visuals/download_guide.png", width=450)
 
 
-uploaded_file = st.file_uploader(
-    "Upload your Spotify data (ZIP File)", type=["zip"], accept_multiple_files=False
+uploaded_files = st.file_uploader(
+    "Upload your Spotify data (Single ZIP File)",
+    type=["zip"],
+    accept_multiple_files=True,
 )
 
-if uploaded_file and not st.session_state.form_values["data_uploaded"]:
-    with st.spinner("Crunching your Spotify jams... Hold tight"):
-        response = send_file_to_backend(uploaded_file)
+if uploaded_files and not st.session_state.form_values["data_uploaded"]:
+    files = uploaded_files if isinstance(uploaded_files, list) else [uploaded_files]
+    response = None
+    if len(files) > 1:
+        st.error("Please upload only one ZIP file.")
+    elif len(files) == 1:
+        f = files[0]
+        if not f.name.lower().endswith(".zip"):
+            st.error(
+                "Please upload the single ZIP file you received from Spotify (not the extracted files)."
+            )
+        else:
+            with st.spinner("Crunching your Spotify jams... Hold tight"):
+                response = send_file_to_backend(f)
 
-    if response.status_code == 200:
+    if response is not None and response.status_code == 200:
         try:
             response_data = response.json()
             session_id = response_data["session_id"]
@@ -652,15 +666,15 @@ if uploaded_file and not st.session_state.form_values["data_uploaded"]:
         except Exception as e:
             st.error(f"Error parsing response: {str(e)}")
 
-    else:
+    elif response is not None:
         st.error(
             "Failed to process file. Please make sure you uploaded the correct **ZIP file** from Spotify and not the extracted files."
         )
-elif uploaded_file and st.session_state.form_values["data_uploaded"]:
+elif uploaded_files and st.session_state.form_values["data_uploaded"]:
     st.success("Upload successful! Ready to visualize your jams 🎶 🎉")
 
 else:
-    st.warning("Please upload your Spotify ZIP file to proceed.")
+    st.warning("Please upload your single Spotify ZIP file to proceed.")
     df = None
 
 selected_attribute, analysis_metric = normalize_inputs(
