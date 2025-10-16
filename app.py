@@ -24,6 +24,7 @@ import base64
 import os
 import tempfile
 import uuid
+import zipfile
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -39,6 +40,9 @@ from src.visuals.anims.create_bar_animation import (
     interp_steps,
     period,
 )
+
+# Packaging settings for JSON uploads
+CHUNK_SIZE = 8 * 1024 * 1024  # 8 MB
 
 st.set_page_config(
     page_title="VizTracks",
@@ -158,6 +162,15 @@ def send_file_to_backend(uploaded_file):
     response = requests.post("https://spotify-animation.fly.dev/process", files=files)
 
     return response
+
+
+def send_zip_path_to_backend(zip_path: str, filename: str = "spotify_jsons.zip"):
+    with open(zip_path, "rb") as f:
+        files = {"file": (filename, f, "application/zip")}
+        response = requests.post(
+            "https://spotify-animation.fly.dev/process", files=files
+        )
+        return response
 
 
 def send_image_request_to_backend(
@@ -622,26 +635,53 @@ with st.expander(
 
 
 uploaded_files = st.file_uploader(
-    "Upload your Spotify data (ZIP File)",
-    type=["zip"],
+    "Upload your Spotify data (ZIP or JSON files)",
+    type=["zip", "json"],
     accept_multiple_files=True,
 )
 
 if uploaded_files and not st.session_state.form_values["data_uploaded"]:
     files = uploaded_files if isinstance(uploaded_files, list) else [uploaded_files]
+    zip_files = [f for f in files if f.name.lower().endswith(".zip")]
+    json_files = [f for f in files if f.name.lower().endswith(".json")]
     response = None
-    if len(files) > 1:
-        st.error("Please upload only one ZIP file.")
-    elif len(files) == 1:
-        f = files[0]
-        if not f.name.lower().endswith(".zip"):
-            st.error(
-                "Please upload the single ZIP file you received from Spotify (not the extracted files)."
-            )
-        else:
-            with st.spinner("Crunching your Spotify jams... Hold tight"):
-                response = send_file_to_backend(f)
 
+    if json_files:
+        if zip_files:
+            with st.spinner("Crunching your Spotify jams... Hold tight"):
+                with tempfile.TemporaryDirectory() as td:
+                    zip_path = os.path.join(td, "spotify_jsons.zip")
+                    with zipfile.ZipFile(
+                        zip_path, mode="w", compression=zipfile.ZIP_STORED
+                    ) as zf:
+                        for jf in json_files:
+                            temp_json_path = os.path.join(td, jf.name)
+                            os.makedirs(os.path.dirname(temp_json_path), exist_ok=True)
+                            with open(temp_json_path, "wb") as out:
+                                while True:
+                                    chunk = jf.read(CHUNK_SIZE)
+                                    if not chunk:
+                                        break
+                                    out.write(chunk)
+                            try:
+                                jf.seek(0)
+                            except Exception:
+                                pass
+                            zf.write(temp_json_path, arcname=jf.name)
+                            try:
+                                os.remove(temp_json_path)
+                            except Exception:
+                                pass
+                    response = send_zip_path_to_backend(zip_path)
+    elif len(zip_files) == 1:
+        with st.spinner("Crunching your Spotify jams... Hold tight"):
+            response = send_file_to_backend(zip_files[0])
+    elif len(zip_files) > 1:
+        st.error("Please upload only one ZIP file, or upload the extracted JSON files.")
+    else:
+        st.error(
+            "Please upload either a single ZIP file or the extracted files from Spotify."
+        )
     if response is not None and response.status_code == 200:
         try:
             response_data = response.json()
@@ -674,7 +714,9 @@ elif uploaded_files and st.session_state.form_values["data_uploaded"]:
     st.success("Upload successful! Ready to visualize your jams 🎶 🎉")
 
 else:
-    st.warning("Please upload your single Spotify ZIP file to proceed.")
+    st.warning(
+        "Please upload your Spotify ZIP file or the extracted JSON files to proceed."
+    )
     df = None
 
 selected_attribute, analysis_metric = normalize_inputs(
