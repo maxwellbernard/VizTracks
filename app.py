@@ -658,7 +658,7 @@ if uploaded_files and not st.session_state.form_values["data_uploaded"]:
                     zip_path,
                     mode="w",
                     compression=zipfile.ZIP_DEFLATED,
-                    compresslevel=5,
+                    compresslevel=3,
                 ) as zf:
                     for jf in json_files:
                         temp_json_path = os.path.join(td, jf.name)
@@ -678,7 +678,7 @@ if uploaded_files and not st.session_state.form_values["data_uploaded"]:
                             os.remove(temp_json_path)
                         except Exception:
                             pass
-            response = send_zip_path_to_backend(zip_path)
+                response = send_zip_path_to_backend(zip_path)
     elif len(zip_files) == 1:
         with st.spinner("Crunching your Spotify jams... Hold tight"):
             response = send_file_to_backend(zip_files[0])
