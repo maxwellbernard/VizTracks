@@ -622,7 +622,7 @@ with st.expander(
 
 
 uploaded_files = st.file_uploader(
-    "Upload your Spotify data (Single ZIP File)",
+    "Upload your Spotify data (ZIP File)",
     type=["zip"],
     accept_multiple_files=True,
 )
