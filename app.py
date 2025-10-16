@@ -656,21 +656,18 @@ if uploaded_files and not st.session_state.form_values["data_uploaded"]:
                     compresslevel=3,
                 ) as zf:
                     for jf in json_files:
-                        temp_json_path = os.path.join(td, jf.name)
-                        os.makedirs(os.path.dirname(temp_json_path), exist_ok=True)
-                        with open(temp_json_path, "wb") as out:
-                            while True:
-                                chunk = jf.read(CHUNK_SIZE)
-                                if not chunk:
-                                    break
-                                out.write(chunk)
                         try:
                             jf.seek(0)
                         except Exception:
                             pass
-                        zf.write(temp_json_path, arcname=jf.name)
+                        with zf.open(jf.name, "w") as dest:
+                            while True:
+                                chunk = jf.read(CHUNK_SIZE)
+                                if not chunk:
+                                    break
+                                dest.write(chunk)
                         try:
-                            os.remove(temp_json_path)
+                            jf.seek(0)
                         except Exception:
                             pass
                 response = send_zip_path_to_backend(zip_path)
