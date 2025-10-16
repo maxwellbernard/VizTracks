@@ -633,6 +633,10 @@ with st.expander(
     with col2:
         st.image("./assets/visuals/download_guide.png", width=450)
 
+if st.session_state.get("upload_success_banner"):
+    st.success("History uploaded successfully! 🎉 Ready to visualize your jams 🎶")
+    st.session_state.upload_success_banner = False
+
 
 uploaded_files = st.file_uploader(
     "Upload your Spotify data (ZIP or JSON files)",
@@ -647,32 +651,34 @@ if uploaded_files and not st.session_state.form_values["data_uploaded"]:
     response = None
 
     if json_files:
-        if zip_files:
-            with st.spinner("Crunching your Spotify jams... Hold tight"):
-                with tempfile.TemporaryDirectory() as td:
-                    zip_path = os.path.join(td, "spotify_jsons.zip")
-                    with zipfile.ZipFile(
-                        zip_path, mode="w", compression=zipfile.ZIP_STORED
-                    ) as zf:
-                        for jf in json_files:
-                            temp_json_path = os.path.join(td, jf.name)
-                            os.makedirs(os.path.dirname(temp_json_path), exist_ok=True)
-                            with open(temp_json_path, "wb") as out:
-                                while True:
-                                    chunk = jf.read(CHUNK_SIZE)
-                                    if not chunk:
-                                        break
-                                    out.write(chunk)
-                            try:
-                                jf.seek(0)
-                            except Exception:
-                                pass
-                            zf.write(temp_json_path, arcname=jf.name)
-                            try:
-                                os.remove(temp_json_path)
-                            except Exception:
-                                pass
-                    response = send_zip_path_to_backend(zip_path)
+        with st.spinner("Crunching your Spotify jams... Hold tight"):
+            with tempfile.TemporaryDirectory() as td:
+                zip_path = os.path.join(td, "spotify_jsons.zip")
+                with zipfile.ZipFile(
+                    zip_path,
+                    mode="w",
+                    compression=zipfile.ZIP_DEFLATED,
+                    compresslevel=5,
+                ) as zf:
+                    for jf in json_files:
+                        temp_json_path = os.path.join(td, jf.name)
+                        os.makedirs(os.path.dirname(temp_json_path), exist_ok=True)
+                        with open(temp_json_path, "wb") as out:
+                            while True:
+                                chunk = jf.read(CHUNK_SIZE)
+                                if not chunk:
+                                    break
+                                out.write(chunk)
+                        try:
+                            jf.seek(0)
+                        except Exception:
+                            pass
+                        zf.write(temp_json_path, arcname=jf.name)
+                        try:
+                            os.remove(temp_json_path)
+                        except Exception:
+                            pass
+            response = send_zip_path_to_backend(zip_path)
     elif len(zip_files) == 1:
         with st.spinner("Crunching your Spotify jams... Hold tight"):
             response = send_file_to_backend(zip_files[0])
@@ -702,6 +708,7 @@ if uploaded_files and not st.session_state.form_values["data_uploaded"]:
             st.success(
                 "History uploaded successfully! 🎉 Ready to visualize your jams 🎶"
             )
+            st.session_state.upload_success_banner = True
             st.rerun()
         except Exception as e:
             st.error(f"Error parsing response: {str(e)}")
