@@ -633,11 +633,6 @@ with st.expander(
     with col2:
         st.image("./assets/visuals/download_guide.png", width=450)
 
-if st.session_state.get("upload_success_banner"):
-    st.success("History uploaded successfully! 🎉 Ready to visualize your jams 🎶")
-    st.session_state.upload_success_banner = False
-
-
 uploaded_files = st.file_uploader(
     "Upload your Spotify data (ZIP or JSON files)",
     type=["zip", "json"],
